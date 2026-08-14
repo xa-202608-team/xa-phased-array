@@ -1,0 +1,10 @@
+# 换行策略：文本文件统一 LF（跨 OS 仿真一致；GPU 训练允许 ±5% 容差）
+* text=auto eol=lf
+
+# 二进制文件不做任何归一化
+*.png binary
+*.h5 binary
+*.hdf5 binary
+*.pt binary
+*.pth binary
+*.ckpt binary

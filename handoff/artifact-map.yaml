@@ -1,0 +1,6 @@
+schema_version: 1.1.0
+component: phased_array
+mappings:
+  - {local: data, payload: 04_数据/phased_array, role: dataset}
+  - {local: checkpoints, payload: 03_代码/components/phased_array/checkpoints, role: checkpoint}
+  - {local: results/reference, payload: 05_结果/reference/phased_array, role: reference_result}

@@ -1,0 +1,11 @@
+__pycache__
+*.pyc
+*.pyo
+tmp/
+*.egg-info
+.git
+.pytest_cache
+# 可再生中间数据 — entrypoint reproduce full 会从仿真器重建 (P3→P4)
+data/simulated/
+data/features/phased_array/schema_ch_v1/target/channel_features.h5
+data/features/phased_array/schema_v1/target/target_features.h5
