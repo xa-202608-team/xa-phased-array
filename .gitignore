@@ -1,0 +1,23 @@
+# Python 运行产物
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+
+# 实验输出（只能写入 --output 指定目录，不入库）
+outputs/
+runs/
+wandb/
+
+# 模型权重与大文件
+*.ckpt
+*.pt
+*.pth
+*.log
+
+# 环境与密钥
+.env
+.env.*
+
+# 大型或不可再分发数据不入库（经 manifest + 下载/生成脚本 + SHA256 治理）
+# 允许进入 Git 的小型 fixture 必须放在 tests/fixtures/，不得用宽泛的 data/ 例外绕过治理
