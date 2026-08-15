@@ -105,7 +105,7 @@ MMD 无贡献，MOSFET→阵列服务寿命权重迁移路线被否证。**
 | random_full_finetune | 0.2603 | 随机初始化 + 同 S3 协议（最优对照） |
 | random_nommd | 0.2654 | 判 MMD 归因 |
 | random_frozen / source_pretrain_finetune | 0.2590 / 0.2758 | 判冻结协议归因 |
-| 基线 constant / arrhenius | 0.3917 / 0.5290 | 非学习基线（5 seed） |
+| 基线 constant / arrhenius | 0.3917 / 0.5290 | 非学习基线（constant 为 5 seed 均值；arrhenius 0.5290 为五划分口径，其 5-seed mean 实为 0.5674） |
 
 归因链（配对 ΔRMSE 95% CI）：
 
