@@ -1,6 +1,40 @@
 {
   "schema_version": "1.1.0",
   "component": "phased_array",
-  "status": "LOCAL_ARTIFACT_REQUIRED",
-  "entries": []
+  "status": "ROLES_VERIFIED",
+  "verified_at": "2026-08-15",
+  "note": "各 checkpoint 的角色、消费方与状态已核实（docs/MODELING.md §4/§6）。权重文件按治理不入库；sha256 在本地训练产出后如实登记，不预填编造；本地绝对路径不写入本清单。",
+  "entries": [
+    {
+      "name": "source_phased_array_tcn_pretrain.pt",
+      "role": "source_domain_pretrain_tcn_dual_head",
+      "architecture": "TCN 编码器 + HI/RUL 双头（canonical 4 维输入）",
+      "trained_on": "mosfet_canonical.h5（真实 NASA 特征转换或 synthetic 合成；source_mode 由训练时 prepare_source_data.py 报告）",
+      "consumers": [
+        "ch_source_pretrain_frozen（S2 冻结协议组）",
+        "ch_source_mmd_physics（源 ckpt + S3 全微调 + MMD + L_phys，主迁移组）"
+      ],
+      "status_note": "冻结结论 NO_POSITIVE_TRANSFER_SUPPORTED（docs/MODELING.md §6）：该 ckpt 在两种协议下均显著负迁移（init_control/full_control CI 全正），保留作负对照与归因链证据，主模型 target_only_gru 不依赖它",
+      "rebuild": "python -m src.train.pretrain --config configs/phased_array.yaml --canonical（或 scripts/reproduce_full.py P2 自动产出）",
+      "sha256": null,
+      "tracked": false
+    },
+    {
+      "name": "baselines_channel.json",
+      "role": "channel_level_non_learning_baselines_output",
+      "kind": "metrics_artifact_not_weights",
+      "contains": "constant / z_extrap / arrhenius / similarity_matching / particle_filter 五基线 RMSE/PHM/MAE",
+      "rebuild": "python -m src.baselines.channel_baselines --config configs/phased_array.yaml --out <path>",
+      "sha256": null,
+      "tracked": false
+    },
+    {
+      "name": "迁移微调与 k-shot 实验权重（run_groups 各组 per-seed）",
+      "role": "experiment_group_checkpoints",
+      "status_note": "由 src/experiments/run_groups.py 按组按 seed 产出，仅用于对比实验与消融归因，不属于对外交付权重；结论以汇总指标为准（results/public_summary.json）",
+      "rebuild": "scripts/reproduce_full.py P5",
+      "sha256": null,
+      "tracked": false
+    }
+  ]
 }

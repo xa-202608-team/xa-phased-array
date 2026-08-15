@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://xa-202608-team.github.io/contracts/telemetry.schema.json",
+  "title": "Telemetry table rows",
+  "description": "时序遥测契约：每条遥测记录必须且只包含以下字段，与标签 CSV 严格分离。",
+  "type": "array",
+  "minItems": 1,
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "timestamp",
+      "component_id",
+      "component_type",
+      "condition_id",
+      "telemetry_name",
+      "value",
+      "unit"
+    ],
+    "properties": {
+      "timestamp": {"type": "string", "format": "date-time", "minLength": 1},
+      "component_id": {"type": "string", "minLength": 1},
+      "component_type": {"enum": ["battery", "phased_array", "wheel"]},
+      "condition_id": {"type": "string", "minLength": 1},
+      "telemetry_name": {"type": "string", "minLength": 1},
+      "value": {"type": "number"},
+      "unit": {"type": "string", "minLength": 1}
+    }
+  }
+}

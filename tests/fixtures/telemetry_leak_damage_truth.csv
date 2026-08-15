@@ -1,0 +1,9 @@
+timestamp,component_id,component_type,condition_id,telemetry_name,value,unit
+2026-01-01T00:00:00Z,pa-array-001,phased_array,leo_nominal,damage_truth,0.000000,ratio
+2026-01-01T06:00:00Z,pa-array-001,phased_array,leo_nominal,damage_truth,0.010526,ratio
+2026-01-01T12:00:00Z,pa-array-001,phased_array,leo_nominal,damage_truth,0.021053,ratio
+2026-01-01T18:00:00Z,pa-array-001,phased_array,leo_nominal,damage_truth,0.031579,ratio
+2026-01-02T00:00:00Z,pa-array-001,phased_array,leo_nominal,damage_truth,0.042105,ratio
+2026-01-02T06:00:00Z,pa-array-001,phased_array,leo_nominal,damage_truth,0.052632,ratio
+2026-01-02T12:00:00Z,pa-array-001,phased_array,leo_nominal,damage_truth,0.063158,ratio
+2026-01-02T18:00:00Z,pa-array-001,phased_array,leo_nominal,damage_truth,0.073684,ratio

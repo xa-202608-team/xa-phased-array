@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://xa-202608-team.github.io/contracts/labels.schema.json",
+  "title": "Label table rows",
+  "description": "标签契约：监督标签由预处理流程统一派生（非数据集原始字段），与遥测 CSV 分离存放。",
+  "type": "array",
+  "minItems": 1,
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["timestamp", "component_id", "degradation_state", "split"],
+    "properties": {
+      "timestamp": {"type": "string", "format": "date-time", "minLength": 1},
+      "component_id": {"type": "string", "minLength": 1},
+      "degradation_state": {"type": "number", "minimum": 0},
+      "split": {"enum": ["train", "validation", "test", "inference"]},
+      "rul": {"type": "number", "minimum": 0},
+      "event_observed": {"enum": [0, 1]},
+      "rul_lower_bound": {"type": "number", "minimum": 0}
+    }
+  }
+}

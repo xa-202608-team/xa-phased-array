@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://xa-202608-team.github.io/contracts/handoff-manifest.schema.json",
+  "title": "Release candidate handoff manifest",
+  "description": "RC 交接清单契约：登记候选版本、环境、种子、复现命令、逐文件溯源与再分发属性。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "component",
+    "release_candidate",
+    "git_commit",
+    "contract_version",
+    "created_at",
+    "environment",
+    "random_seeds",
+    "commands",
+    "files",
+    "public_summary",
+    "reproduce_status"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.1.0"},
+    "component": {"enum": ["battery", "phased_array", "wheel"]},
+    "release_candidate": {
+      "type": "string",
+      "pattern": "^(battery|phased-array|wheel)-v[0-9]+\\.[0-9]+\\.[0-9]+-rc\\.[0-9]+$"
+    },
+    "git_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "contract_version": {"const": "component-contract-v1.1.0"},
+    "created_at": {"type": "string", "format": "date-time", "minLength": 1},
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["python", "pytorch", "os", "device"],
+      "properties": {
+        "python": {"type": "string", "minLength": 1},
+        "pytorch": {"type": "string", "minLength": 1},
+        "os": {"type": "string", "minLength": 1},
+        "device": {"type": "string", "minLength": 1}
+      }
+    },
+    "random_seeds": {"type": "array", "minItems": 1, "items": {"type": "integer", "minimum": 0}},
+    "commands": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "files": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "role",
+          "size",
+          "sha256",
+          "redistributable",
+          "source_url",
+          "processing_provenance"
+        ],
+        "properties": {
+          "path": {"type": "string", "minLength": 1},
+          "role": {"type": "string", "minLength": 1},
+          "size": {"type": "integer", "minimum": 0},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "redistributable": {"type": "boolean"},
+          "source_url": {
+            "description": "外部数据必须为合法 https URL；纯本地仿真生成文件允许 null，但 processing_provenance 必须给出配置、脚本和种子。不得用空字符串规避溯源。",
+            "anyOf": [
+              {"type": "string", "pattern": "^https://"},
+              {"type": "null"}
+            ]
+          },
+          "processing_provenance": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "public_summary": {"type": "string", "minLength": 1},
+    "reproduce_status": {"const": "REPRODUCE_OK"}
+  }
+}
