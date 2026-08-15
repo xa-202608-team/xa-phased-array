@@ -1,0 +1,271 @@
+# 相控阵天线 T/R 通道跨域退化迁移寿命预测 — 唯一差异点配置
+# 所有仿真参数 / 超参 / 种子集中于此, 保证可复现 (赛题工程可复现性 50 分地基)
+# 字段含义详见 docs/phased_array_dev_plan.md 对应阶段
+# 依据: docs/相控阵天线跨领域退化迁移寿命预测训练方案.md (v1.0)
+#       docs/三组件数据集与遥测量汇总.md §3
+# 复用飞轮框架 (utils/ models/ transfer/), 本文件为相控阵全部参数源
+# 迁移定位: 退化模式部分同构, 落在 HI 动力学层 (非原始电参数直接映射)
+
+seed: 42
+
+# ---------- 源域 (NASA MOSFET 主 / IGBT 辅) ----------
+source:
+  name: NASA-MOSFET-IGBT
+  primary: MOSFET_Thermal_Overstress_Aging
+  auxiliary: [IGBT_Accelerated_Aging]    # 跨数据集验证 (辅)
+  n_devices_approx: 6                    # 规模估计 (真实 MOSFET 37 case / IGBT 4 device 已落地; 轻量模型+LOO)
+  # 电参数轨迹 (老化步级, 非等时间采样) — 异于飞轮振动 12 维
+  # schema_v3 (2026-07-24 Phase 1): 5 维特征，工况条件化版本
+  # 新增 supply_V, gate_voltage, duty_cycle 工况变量，删除全局 log-MAD 过滤
+  feature_names: [RDS_drift, T_case_C, supply_V, gate_voltage, duty_cycle]
+  features:
+    target_dim: 5                        # 器件级电参数特征维 (schema_v3)
+  rul_cap_ratio: 0.35                    # R_max = 35% 寿命
+  failure:
+    threshold_type: normalized_delta     # NASA Celaya 失效判据: 温度校正后 ΔR_DS(ON) 归一化增量
+    RDS_delta_threshold: 0.05            # NASA MOSFET 老化 ΔR_DS(ON)=0.05 (非原始电阻上升 100%, 修复 GPT 一)
+  split:
+    method: leave_one_device_out         # 严格按器件个体, 禁止时间窗打散
+    val_device_ids: []                   # 真实 case_id (如 Test_8); 空=默认最后器件 val (单折; 正式实验应遍历全部 LOO)
+
+# ---------- 相控阵目标域仿真 (方案 §5 + 数据集文档 §3.1) ----------
+sim:
+  n_traj: 200                            # MVP 200; 正式实验可配 500 (方案 §5)
+  duration_years: 8.0                    # GaN T/R 在轨设计寿命量级
+  sample_period_s: 21600                 # 遥测健康窗口 (6h, 方案 §5)
+  physics_dt_s: 300                      # 物理积分步 (5min; 分离于遥测采样以正确解析 90min 轨道热周期)
+  array:
+    n_elements: 256                      # 16×16 阵
+    grid: [16, 16]
+    element_spacing_lambda: 0.5          # 半波长间距
+    scan_az_deg_range: [-45.0, 45.0]     # 扫描角随机化
+    scan_el_deg: 0.0
+    subarray_block: 4                    # 4×4 块 -> 16 子阵 (PA4 通道级模型 / PA6 稀疏遥测消融)
+  physics:
+    # --- 第一级: 应力—累积损伤 (Arrhenius, 数据集文档 §3.1) ---
+    Ea_eV_range: [0.7, 1.1]             # GaN HEMT 激活能
+    time_exp_m: 0.5                      # 时间指数 t^m
+    Tj_range_C: [90.0, 140.0]           # 结温循环范围 (占空比驱动热循环)
+    duty_cycle_range: [0.3, 0.8]         # PA 占空比 (电热应力驱动)
+    # --- 第二级: 器件参数漂移 -> 通道射频性能 ---
+    R_DS_drift_Delta_range: [1.2, 1.5]   # R_DS_ON 退化倍数 (校准: 末端 ΔEIRP~margin0, 失效 60-80%)
+    IDSS_decay_range: [0.08, 0.12]       # I_DSS 下降比例 (GaN 失效定义 ~20% -> ~1dB)
+    gm_decay_range: [0.04, 0.08]         # 跨导下降
+    phase_drift_deg_range: [0.0, 5.0]    # 相位校准残差漂移 (破坏阵列对称性, 主导旁瓣抬升)
+    device_spread_sigma: 0.3             # 制造个体差异 (A 对数正态)
+    life_scale_sigma: 0.3                # 器件寿命预算散布 (P1: 0.5→0.3, 降极端轨迹 damage 爆炸)
+    D_EOL_fixed: 0.5765                  # P0-3 终修 (GPT 三轮): 失效时 damage 物理阈值, 仿真器预固定 (基于一次全失效 damage[eol] 中位估计); build 读此不遍历含 test 的 eol (避免 test 泄漏)
+    # life_ref 从物理公式算 (_nominal_life_ref: accel·duty·duration); 删除魔数 26840 (P1 #2)
+    damage_model:                          # P1 #2: Arrhenius + Coffin-Manson 热循环 + R_th 正反馈
+      coffin_manson:
+        enabled: true
+        deltaT_ref_K: 20.0                 # CM 参考温升 (LEO 90min 日照/阴影循环 ΔTj)
+        exponent_n: 3.0                    # CM 幂指数 (GaN/焊点热疲劳 2-4)
+      rth_feedback:
+        enabled: true
+        a5: 0.3                            # R_th(s)=R_th0·(1+a5·s), 末期热阻正反馈致加速
+        Trise_per_Rth_K: 15.0              # 单位 a5·s 对应额外结温升 (K)
+    hotspot_field:                        # P1 #3: 二维相关温度场 → 失效聚簇
+      enabled: true
+      n_hotspots_range: [1, 3]            # 热点个数
+      radius_lambda_range: [1.0, 3.0]     # 热点半径 (波长单位)
+      Tj_boost_C_range: [5.0, 15.0]       # 热点区额外结温升 (K, 驱动 Arrhenius 加速)
+    # --- T1 (M1): 子阵级独立损伤积分 (迁移接口下沉到器件层的前置) ---
+    # enabled=true 时每子阵独立 dose 积分 (Tj_offset_s + life_scale_s), 产出新数据集 DYNAMICS_ID v2;
+    # enabled=false 走旧标量路径 (cross_level_transfer 复跑, hash 不变)
+    subarray_dose:
+      enabled: true                       # 默认开 (通道级迁移路线主线)
+      sigma_sub: 0.20                     # 子阵寿命预算散布 (对数正态 σ)
+    # --- 终末阶段: 少数通道降额/退出 (辅助特征, 非主体退化) ---
+    channel_dropout_weibull:
+      enabled: true                      # 仅终末阶段; k/N 为辅助 HI, 非主标签
+      beta: 2.5                          # Weibull 形状参数 (~2-3)
+  array_factor:
+    mode: azimuth_cut                    # azimuth_cut = 1D 方位切面(MVP); simplified = 20log10(1-k/N) 解析基线
+  link_budget:
+    # 服务寿命: M_link(t) = M_link(0) - ΔEIRP(t); ΔEIRP 由完整 AF 相对初值计算
+    # 方案 §2 完整公式: M_link = EIRP + Gr - L_path - L_other - (C/N0)_req
+    # 仿真用相对量: 初始余量随退化单调下降, M_link<=0 即服务寿命结束
+    initial_margin_dB_range: [1.5, 2.0]  # 本仿真链路预算参数 (非相控阵统一行业标准)
+  service_limits:
+    # 系统服务 RUL 多维越限 (方案 §2):
+    #   RUL(t) = inf{τ-t : M_link(τ)≤0 or SLL(τ)>SLL_max or |θ_err(τ)|>θ_max}
+    SLL_max_dB: -8.0                     # 最大旁瓣电平上限 (健康阵第一旁瓣~-13dB, 允许退化升高 5dB)
+    theta_err_max_deg: 0.5               # 波束指向误差上限
+    consecutive_windows: 4               # 持续越限判据 (4×6h=24h; 防单点抖动假越限)
+  disturbance:
+    noise_ratio: 0.01                    # 1% 满量程噪声
+    spatial_cluster_prob: 0.2            # 失效通道空间聚簇概率 (破坏对称性 -> 旁瓣抬升)
+    telemetry_missing_prob: 0.0          # 遥测缺失 (稀疏档消融时调高, 方案 §8)
+
+# ---------- 模型 (复用 models/tcn_encoder.py) ----------
+model:
+  encoder: tcn                           # tcn | gru (源域器件少, 不用 Transformer)
+  input_len_L: 64                        # 滑窗长
+  n_features_target: 12                  # 目标域 x_T 维度 (x_global 6 + x_nodes mean-pool 6)
+  tcn:
+    channels: 64
+    kernel_size: 5
+    num_blocks: 4
+    dropout: 0.1
+  latent_dim: 64
+  array_aggregator: attention            # 通道 HI -> 阵列系统性能聚合 (PA4)
+
+# ---------- 损失 (方案 §6 总损失) ----------
+# L = L_RUL + α·L_trend + β·L_HI + γ·L_quantile + λ·L_align + μ·L_mono + ν·L_smooth + ρ·L_phys
+loss:
+  lambda_rul: 1.0
+  alpha_trend: 0.5                       # 多步趋势
+  beta_hi: 1.0                           # 器件 HI 头
+  gamma_quantile: 0.3                    # 概率分位 P10/P50/P90
+  lambda_align: 1.0                      # MMD 域对齐 (迁移阶段)
+  mu_mono: 1.0                           # 单调性 (T14: 0.1→1.0 治理 mono_viol 0.51; HI 标签 isotonic 后完全单调, 模型需更强 mono 约束才学得到)
+  nu_smooth: 0.1                         # 平滑
+  rho_phys: 0.2                          # 物理一致性 (Arrhenius 单调损伤)
+  huber_delta: 1.0
+  censored_hinge_eta: 1.0                # 删失器件 RUL hinge 权重 (D1 修复: 删失行 max(0, lb-pred)², 允许预测大值)
+
+# ---------- 预训练 (PA2; 复用 train/pretrain.py, 参数化支持组件级) ----------
+pretrain:
+  source_feature_path: data/features/phased_array/schema_v3/source/mosfet_source_features.h5  # NASA 真实 42 case (32 失效/10 删失, schema_v3 5 维, 重跑产出 2026-07-26)
+  canonical_source_path: data/features/phased_array/schema_v4/source/mosfet_canonical.h5  # T3/M3: canonical 4 维 512 点 (device_canonical_v1)
+  canonical_n_win: 512
+  source_id_field: device_id             # 器件级 (异于飞轮 bearing_id)
+  epochs: 50
+  batch_size: 64                         # 源域器件少, 小 batch
+  lr: 1.0e-3                        # 默认 (3e-4 试过: 训练锁死同 1e-3, 非 lr 问题)
+  weight_decay: 1.0e-5
+  device: cuda                           # cuda | cpu (无 GPU 自动 fallback)
+  seq_block_K: 8
+  stride: 80                           # 源域滑窗步长 (飞轮 1=短序列; 相控阵真实 per-case T~10^4 用 80 控窗数防过拟合, smoke 时 run_groups/pretrain 自适应)
+  hi_mono_violation_threshold: 0.6          # T14: 0.05→0.6 合理化 (器件级 HI isotonic 后完全单调, 但 block 级 K=8 窗预测 ~0.5 相邻下降是跨工况段固有性质; 0.05 形同虚设, 改 0.6 略高于实际水平作软门控)
+  val_rul_rmse_threshold: null           # PA2 依器件老化文献填
+
+# ---------- 迁移 (PA5; 复用 transfer/, adapter MOSFET→GaN) ----------
+transfer:
+  mode: latent_legacy                    # 观测层迁移 (主路径); hi_dynamics 降级为消融 (run_hi_layer, --hi-layer 触发)
+  stages: [freeze, adapter, mmd]         # S1 冻结源域编码器 / S2 GaN adapter+头 / S3 MMD+微调 (旧 latent 路径, mode=latent_legacy 时生效)
+  encoder_freeze: true                   # S2 编码器冻结
+  adapter_hidden: 64
+  gan_adapter: true                      # GaN 适配层: MOSFET 电参数 -> GaN HI 动力学层 (latent_legacy 路径)
+  align_method: mmd                      # mmd (主) | coral (可选)
+  mmd_kernel: multiscale
+  hi_bins:                               # 按健康阶段对齐 (绝不按绝对时间)
+    - [0.0, 0.2]
+    - [0.2, 0.5]
+    - [0.5, 0.8]
+    - [0.8, 1.0]
+  mmd_lambda: 1.0
+  split:                                 # 完整轨迹划分, 禁止时间窗打散
+    train: 0.15
+    val: 0.20
+    test: 0.65
+  finetune_lr: 1.0e-4
+  # P1-2: RUL 归一物理上限 (跨 seed 固定, 不再每 seed 用 train-only max)
+  # 派生: rul_cap_ratio(0.35) × duration_years(8) × 365 × 4(6h/日) = 0.35 × 11680 = 4088
+  rul_max_norm: 4088
+  target_feature_path: data/features/phased_array/schema_v1/target/target_features.h5  # 相控阵目标域 (x_global+x_nodes)
+  ablation_drop_features: []   # GPT §6 消融: 删服务寿命判据量验证 target-only 真学退化 (非读判据量离阈值距离); 空=主实验不删; 消融设 [M_link_dB, SLL_dB, theta_err_deg] (或 run_groups --drop-features 覆盖)
+  target_has_nodes: true                      # 目标域含子阵节点 (mean-pool 16 节点→concat x_global)
+  hi_layer:                              # HI 动力学层路径 (mode=hi_dynamics) 专用参数
+    target_aux_head: false               # 可选旁支 (路径 A 默认关; 末端晚融合 12 维 obs)
+    target_aux_alpha: 0.0                # 末端晚融合权重 (alpha=0 时 rul_aux 不影响 rul_pred)
+    hi_window_stride: 50                 # 目标域 HI 窗步长 (6h 采样, 序列长用大 stride 控窗数)
+
+# ---------- TimesFM 2.5 辅助分支 (PA7; 方案 §7) ----------
+# 定位: 概率趋势预测 + 强基线, 非替代跨域 RUL 主模型
+timesfm:
+  enabled: false                         # 默认关; PA7 启用 (需额外依赖 timesfm)
+  model: timesfm-2.5
+  input_series: [HI_array, EIRP_norm, link_margin]   # 少量物理可解释一维健康序列
+  xreg: [T_j, duty_cycle, scan_az, power_cmd]        # 外生协变量
+  quantiles: [0.1, 0.5, 0.9]             # P10/P50/P90
+  lora:
+    enabled: true
+    rank: 8
+  fusion: consistency                    # 与主模型一致性校验 + 概率融合
+
+# ---------- 通道级迁移 (T2/M2, channel_level 路线主线) ----------
+# 器件层标签: z=max(dR/δR,dI/δI,dg/δg), 非服务层; canonical 4 维与源域同语义
+channel_level:
+  enabled: true
+  feature_names: [p_drift_norm, T_dev_C, duty, drive_norm]
+  n_features: 4
+  delta_thresholds:
+    R_DS: 0.35                 # GaN R_DS(ON) 退化规范 (T2b 标定后固定, 此处初值)
+    I_DSS: 0.20                # ΔI_DSS ≥ 20% ≈ 1 dB 增益跌落 (行业惯例)
+    g_m: 0.15
+    P_out: 0.20                # 功率漂移阈值 (canonical x_ch 第0维 δ_P, ≈1dB)
+  delta_source_R_DS: 0.05      # 源域 Si MOSFET (NASA Celaya 判据)
+  rul_cap_ratio: 0.35
+  calibration_seed: 1234       # 标定专用 seed, 与实验 seed 严格隔离
+  feature_path: data/features/phased_array/schema_ch_v1/target/channel_features.h5
+
+# ---------- 对比实验 (PA6; 方案 §8 八组 + 三类消融) ----------
+experiments:
+  n_seeds: 5
+  groups:                                  # PA6 旧组 (服务级, cross_level 消融复跑用; 不动)
+    - target_only_tcn
+    - target_only_gru
+    - source_pretrain_finetune
+    - source_mmd_physics
+    - random_frozen
+    - random_full_finetune
+    - random_nommd
+    - physical_extrap
+  # M7 通道级主线 (T6.3, level=channel): ch_* 走 ChannelSeqDataset + canonical schema
+  channel_groups:
+    - ch_target_only_tcn
+    - ch_target_only_gru
+    - ch_source_pretrain_frozen
+    - ch_source_mmd_physics                # 主迁移组
+    - ch_random_frozen
+    - ch_random_full_finetune
+    - ch_random_nommd
+  # M7 服务级消融 (level=service): 旧口径原样, 唯一变量=迁移接口层级
+  service_groups:
+    - cross_level_transfer
+  k_shot: [1, 3, 5, all]                   # k-shot 协议 (T6.2, 仅 channel level 生效)
+  k_shot_seeds: 5                          # 每个 k 独立 seed 数 (与 n_seeds 共用)
+  ablations:
+    channel_count_vs_continuous: true    # 通道计数 k/N vs 连续幅相退化
+    full_af_vs_simplified: true          # 完整 AF vs 20log10(1-k/N) 解析基线
+    telemetry_sparsity: [full, subarray, sparse]  # 全/子阵聚合/稀疏遥测三档
+  rul_cap_ratio: 0.35
+  primary_source_group: ch_source_mmd_physics    # M7: 主迁移组切 ch_ (PA6 旧 source_mmd_physics 保留作服务级对照)
+  primary_model_group: ch_target_only_gru         # M7: 主模型固定 ch_target_only_gru
+
+# ---------- 复现性 ----------
+reproducibility:
+  deterministic: true                    # cudnn 确定性模式
+  cudnn_benchmark: false
+
+# ---------- 故障注入 (§5.7, 配对注入设计) ----------
+# 配对注入: 60 条故障轨迹是 60 条标称轨迹的克隆 (同 seed/同采样参数), 唯一差别是注入项
+# --inject none 必须逐位复现现有 hash e30cc32a (故障参数用独立 RNG 子流, 不消耗主流)
+# 注入时点锚在配对标称轨迹的 EOL_svc 上 (删失回退到 horizon 同比例)
+fault_injection:
+  enabled: false                            # 主矩阵跑时为 false
+  n_per_type: 15                            # 每类故障 15 条
+  rng_substream: 9001                       # 独立子流 (预留; 当前所有故障参数确定性)
+  anchor: eol_svc_nominal                   # 删失轨迹回退到 horizon 同比例
+  types:
+    rth_step:                               # F1: 局部热阻阶跃 (焊料层空洞/贴装脱层)
+      r_th_mult: 1.6                        # R_th0 × 1.6 (预期 Arrhenius 加速 ~2.1×)
+      start_frac: 0.45                      # 0.45 × EOL_svc_nom
+      scope: subarray
+      sub_offset: 0                         # sub_id = (traj_id + offset) mod 16
+    thermal_bias:                           # F2: 全局热控偏置 (散热面退化/热管性能下降)
+      tj_offset_K: 8.0                      # Tj_base + 8.0 K (预期加速 ~1.7×)
+      ramp_windows: 10                      # 10 窗 (60h) 内线性抬升
+      start_frac: 0.35                      # 0.35 × EOL_svc_nom
+      scope: array
+    channel_open:                           # F3: 通道提前开路 (偏置电路失效/键合线断裂)
+      n_channels: 8                         # 子阵内 8 通道强制 dropout
+      start_frac: 0.50                      # 0.50 × EOL_svc_nom
+      scope: subarray
+      sub_offset: 7                         # sub_id = (traj_id + 7) mod 16
+    cal_freeze:                             # F4: 校准环冻结 (内定标环路失效)
+      phase_residual_mult: 4.0              # 相位残差放大 4× (补偿失效后残差不再被压制)
+      start_frac: 0.40                      # 0.40 × EOL_svc_nom
+      scope: array                          # 预期 SLL/θ_err 加速恶化, 可能触发多维越限绑定切换

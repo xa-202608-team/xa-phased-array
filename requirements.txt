@@ -1,0 +1,14 @@
+# LEO 卫星组件寿命预测 — 依赖清单
+# torch 由 Dockerfile 单独从 CPU 源安装 (避免 PyPI 默认拉 CUDA 版);
+# 本地 conda (pytorch_gpu) 用 CUDA 版, 版本对齐保证复现一致。
+# 版本与 conda env 对齐 (pip freeze 2026-08-04), CPU/CUDA 仅后缀差异。
+torch>=2.10
+numpy==2.4.3
+pandas==3.0.3
+scipy==1.17.1
+scikit-learn==1.9.0
+PyYAML==6.0.3
+h5py==3.16.0
+matplotlib==3.10.9
+pytest==9.0.3
+tqdm==4.67.3

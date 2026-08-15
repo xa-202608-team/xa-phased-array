@@ -21,3 +21,23 @@ wandb/
 
 # 大型或不可再分发数据不入库（经 manifest + 下载/生成脚本 + SHA256 治理）
 # 允许进入 Git 的小型 fixture 必须放在 tests/fixtures/，不得用宽泛的 data/ 例外绕过治理
+
+# 本地工件槽位（锚定仓库根，不影响 src/data/ 等源码目录）：
+# data/、results/、checkpoints/ 只存放本地重建工件；槽位描述文件（README + manifest/指标摘要）白名单入库
+/data/**
+!/data/README.md
+!/data/data_manifest.json
+/results/**
+!/results/README.md
+!/results/public_summary.json
+!/results/expected_metrics.json
+/checkpoints/**
+!/checkpoints/README.md
+!/checkpoints/checkpoint_manifest.json
+
+# 私有协作目录（PR body 等本地文件，公开扫描器对 .private/** 一律判 CRITICAL）
+.private/
+
+# HDF5 大文件防御性忽略（与边界测试 .h5/.hdf5 扩展名断言对齐）
+*.h5
+*.hdf5
