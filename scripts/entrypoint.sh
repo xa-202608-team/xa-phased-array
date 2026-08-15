@@ -1,19 +1,14 @@
 #!/bin/bash
 # =====================================================================
-# 相控阵组件 - 容器入口脚本
-#   支持 verify / reproduce 子命令
+# 相控阵组件 - 容器入口脚本 (契约 component-contract-v1.1.0)
+#   子命令: verify | reproduce_judge | reproduce_full | reproduce | <任意命令>
 #
-# 数据策略:
-#   - mosfet_canonical.h5 (schema_v4, 876KB) 随包发布 -> 源域特征已有
-#   - source_phased_array_tcn_pretrain.pt 随包发布 -> 预训练 ckpt 已有
-#   - 原始 NASA MAT 文件 (7.85GB) 不随包 -> P1 跳过 (canonical 已覆盖)
-#   - schema_v3 source_features.h5 不随包 -> P2 用 --canonical 走 schema_v4
-#   - 仿真数据由 phased_array_sim 运行时自生成 -> P3-P6 自包含
-#
-# 双仿真集 (full 模式):
-#   - sim_v2 (--subdose on):  通道级 (build_channel_hi -> channel_features.h5)
-#   - sim_v1 (--subdose off): 服务级 (build_array_hi -> target_features.h5)
-#   cross_level_transfer 层级消融需要 sim_v1; ch_* 通道级实验需要 sim_v2
+# 工件边界:
+#   - canonical H5 / 预训练 ckpt 不烘焙进镜像; 从 /artifacts/data 与
+#     /artifacts/checkpoints 只读挂载读取 (缺失时走 synthetic 源域 smoke,
+#     输出 manifest 标 source_mode=synthetic, 不得与正式源域结果混用)
+#   - /outputs 为唯一可写输出目录
+#   - 任何主步骤失败必须非零退出 (旧 `|| echo` 吞错模式已移除)
 # =====================================================================
 set -euo pipefail
 
@@ -22,123 +17,103 @@ export PYTHONDONTWRITEBYTECODE=${PYTHONDONTWRITEBYTECODE:-1}
 
 CFG="configs/phased_array.yaml"
 CANONICAL_H5="data/features/phased_array/schema_v4/source/mosfet_canonical.h5"
+CANONICAL_MOUNT="/artifacts/data/mosfet_canonical.h5"
 CKPT="checkpoints/source_phased_array_tcn_pretrain.pt"
+CKPT_MOUNT="/artifacts/checkpoints/source_phased_array_tcn_pretrain.pt"
 
 step() { echo ""; echo "========== $1 =========="; }
 
+mount_artifacts() {
+    # 只读挂载 -> 复制进工作区 (挂载点只读, 工作区可写); 缺失不报错, 走 synthetic
+    if [ -f "$CANONICAL_MOUNT" ]; then
+        mkdir -p "$(dirname "$CANONICAL_H5")"
+        cp "$CANONICAL_MOUNT" "$CANONICAL_H5"
+        echo "  >> 已从只读挂载载入 canonical H5"
+    else
+        echo "  >> /artifacts/data 无 canonical H5 -> judge/full 将走 synthetic 源域 (manifest 如实标注)"
+    fi
+    if [ -f "$CKPT_MOUNT" ]; then
+        mkdir -p checkpoints
+        cp "$CKPT_MOUNT" "$CKPT"
+        echo "  >> 已从只读挂载载入源域预训练 ckpt"
+    fi
+}
+
 case "${1:-verify}" in
     verify)
-        step "相控阵测试套件"
-        python -m pytest tests/ -q --tb=short
+        step "契约 Schema 快照校验"
+        python -c "\
+import json, glob, jsonschema; \
+schemas = [json.load(open(f, encoding='utf-8')) for f in sorted(glob.glob('schemas/*.schema.json'))]; \
+assert len(schemas) == 8; \
+[jsonschema.validators.validator_for(s) for s in schemas]; \
+print('contract schemas ok:', len(schemas))"
+        step "测试套件 (缺失外部数据的测试自动 skip)"
+        python -m pytest tests/ -q --tb=short -p no:cacheprovider
         step "验证通过"
-        echo "✅ 全部测试通过 (缺失外部数据的测试自动 skip)"
+        echo "全部测试通过 (verify 只跑代码/fixture/Schema/导入检查, 不依赖大数据工件)"
+        ;;
+
+    reproduce_judge)
+        step "reproduce_judge (评审用小规模端到端)"
+        mount_artifacts
+        ARGS=("${@:2}")
+        OUTPUT_DIR="/outputs/judge"
+        prev=""
+        for a in ${ARGS[@]+"${ARGS[@]}"}; do
+            [ "$prev" = "--output" ] && OUTPUT_DIR="$a"
+            prev="$a"
+        done
+        ARGS+=(--output "$OUTPUT_DIR")
+        python scripts/reproduce_judge.py ${ARGS[@]+"${ARGS[@]}"}
+        echo "结果输出至 ${OUTPUT_DIR} (manifest/metrics/run.log/REPRODUCE_OK)"
+        ;;
+
+    reproduce_full)
+        step "reproduce_full (完整端到端)"
+        mount_artifacts
+        ARGS=("${@:2}")
+        OUTPUT_DIR="/outputs/full"
+        prev=""
+        for a in ${ARGS[@]+"${ARGS[@]}"}; do
+            [ "$prev" = "--output" ] && OUTPUT_DIR="$a"
+            prev="$a"
+        done
+        ARGS+=(--output "$OUTPUT_DIR")
+        python scripts/reproduce_full.py ${ARGS[@]+"${ARGS[@]}"}
+        echo "结果输出至 ${OUTPUT_DIR} (manifest/metrics/run.log/REPRODUCE_OK)"
         ;;
 
     reproduce)
-        MODE="${2:-smoke}"
-        OUTPUT_DIR="${3:-/results/reproduced/phased_array}"
-        mkdir -p "$OUTPUT_DIR"
-
+        # 契约 v1.0 兼容入口: quick 对齐 judge, full 对齐 reproduce_full (不吞错)
+        # 支持 `reproduce --mode quick --output DIR` 与 `reproduce quick DIR` 两种形态
+        MODE="quick"; OUTPUT_DIR="/outputs/reproduced/phased_array"
+        shift
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                --mode) MODE="$2"; shift 2 ;;
+                --output) OUTPUT_DIR="$2"; shift 2 ;;
+                quick|smoke|full) MODE="$1"; shift ;;
+                *) OUTPUT_DIR="$1"; shift ;;
+            esac
+        done
         case "$MODE" in
-            smoke)
-                step "smoke 模式（合成数据，预计 < 5 分钟）"
-
-                # P1: 源域特征 (canonical h5 随包则跳过)
-                if [ -f "$CANONICAL_H5" ]; then
-                    step "P1 源域特征工程（跳过：canonical 已随包）"
-                else
-                    step "P1 源域特征工程（合成 MOSFET）"
-                    python -m src.data.preprocess.mosfet_features --config $CFG --synthetic --report
-                fi
-
-                # P2: 源域预训练 (ckpt 随包则跳过)
-                if [ -f "$CKPT" ]; then
-                    step "P2 源域预训练（跳过：checkpoint 已随包）"
-                else
-                    step "P2 源域预训练（smoke）"
-                    python -m src.train.pretrain --config $CFG --smoke
-                fi
-
-                step "P3a 相控阵仿真 sim_v2（快速）"
-                python -m src.sim.phased_array_sim --config $CFG --fast --subdose on
-
-                step "P3b 相控阵仿真 sim_v1（快速）"
-                python -m src.sim.phased_array_sim --config $CFG --fast --subdose off
-
-                step "P4 通道级 HI 构造（读 sim_v2）"
-                python -m src.sim.build_channel_hi --config $CFG --report
-
-                step "P4b 阵列级 HI 构造（读 sim_v1）"
-                python -m src.sim.build_array_hi --config $CFG --report
-
-                step "P5 迁移训练（smoke, 旧观测层路径）"
-                python -m src.transfer.train_transfer --config $CFG --smoke 2>&1 || {
-                    echo "  >> [预期跳过] 旧观测层迁移需要 schema_v3 (不随包); 主线实验在 P6"
-                }
-
-                step "P6 对比实验（smoke）"
-                python -m src.experiments.run_groups --config $CFG --smoke --level channel --output-dir "$OUTPUT_DIR"
+            quick|smoke)
+                step "reproduce --mode quick -> reproduce_judge"
+                mount_artifacts
+                python scripts/reproduce_judge.py --output "$OUTPUT_DIR/judge"
                 ;;
-
             full)
-                step "full 模式（200 轨迹完整实验，预计 ~50 分钟 CPU）"
-
-                # P1: 源域特征 (canonical h5 随包则跳过)
-                if [ -f "$CANONICAL_H5" ]; then
-                    step "P1 源域特征工程（跳过：canonical 已随包）"
-                    echo "  >> $CANONICAL_H5 ($(du -h "$CANONICAL_H5" | cut -f1))"
-                else
-                    step "P1 源域特征工程（合成模式生成）"
-                    python -m src.data.preprocess.mosfet_features --config $CFG --synthetic --report
-                fi
-
-                # P2: 源域预训练 (ckpt 随包则跳过)
-                if [ -f "$CKPT" ]; then
-                    step "P2 源域预训练（跳过：checkpoint 已随包）"
-                    echo "  >> $CKPT ($(du -h "$CKPT" | cut -f1))"
-                else
-                    step "P2 源域预训练（用 canonical schema_v4 数据）"
-                    python -m src.train.pretrain --config $CFG --canonical
-                fi
-
-                # P3a: 仿真 sim_v2 (subdose on, 通道级主线)
-                step "P3a 相控阵仿真 sim_v2（200 轨迹，子阵级独立损伤）"
-                python -m src.sim.phased_array_sim --config $CFG --n_traj 200 --seed 42 --subdose on
-
-                # P3b: 仿真 sim_v1 (subdose off, 服务级层级消融)
-                step "P3b 相控阵仿真 sim_v1（200 轨迹，旧标量路径，服务级消融）"
-                python -m src.sim.phased_array_sim --config $CFG --n_traj 200 --seed 42 --subdose off
-
-                # P4: 通道级 HI (读 sim_v2)
-                step "P4 通道级 HI 构造（读 sim_v2）"
-                python -m src.sim.build_channel_hi --config $CFG --report
-
-                # P4b: 阵列级 HI (读 sim_v1, cross_level_transfer 所需)
-                step "P4b 阵列级 HI 构造（读 sim_v1，服务层消融所需）"
-                python -m src.sim.build_array_hi --config $CFG --report
-
-                # P5: 对比实验 (channel + service 层级消融, 5 种子)
-                step "P5 对比实验（channel + service 层级消融，5 种子）"
-                python -m src.experiments.run_groups --config $CFG --level channel --output-dir "$OUTPUT_DIR"
-
-                # P6: 通道级基线
-                step "P6 通道级基线"
-                python -m src.baselines.channel_baselines --config $CFG || echo "  >> 基线非阻塞，跳过"
-
-                # P7: 结果合并
-                step "P7 结果合并"
-                python scripts/merge_matrix_results.py || echo "  >> 合并非阻塞，跳过"
+                step "reproduce --mode full -> reproduce_full (200 轨迹, 5 seeds)"
+                mount_artifacts
+                python scripts/reproduce_full.py --output "$OUTPUT_DIR/full"
                 ;;
             *)
-                echo "Unknown mode: $MODE (expected: smoke | full)"
+                echo "Unknown mode: $MODE (expected: quick | full)"
                 exit 1
                 ;;
         esac
-        step "复现完成"
-        echo "结果输出至 $OUTPUT_DIR"
-        echo "  >> 实验结果: $OUTPUT_DIR/all_metrics_phased_array.json"
-        echo "  >> 基线结果: checkpoints/baselines_channel.json"
-        echo "  >> 合并报告: docs/results_phased_array_channel.md"
+        echo "结果输出至 ${OUTPUT_DIR}"
         ;;
 
     *)

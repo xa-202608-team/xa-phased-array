@@ -1,0 +1,42 @@
+schema_version: "1.1.0"
+contract_version: component-contract-v1.1.0
+dataset_id: phased-array-telemetry-fixture-v1
+component_type: phased_array
+time:
+  column: timestamp
+  format: "ISO 8601 / RFC 3339，UTC，Z 后缀"
+  timezone: UTC
+telemetry:
+  - name: array_gain_db
+    unit: dB
+    sampling_frequency: 1/6h
+    source: phased-array-three-level-simulation
+    prediction_time_available: true
+    derived: true
+    degradation_relation: decreasing
+missing_values:
+  policy: drop
+  detail: 任一字段缺失的遥测行整行剔除，不做插值；本 fixture 为完整规则网格，无缺失行。
+split:
+  policy: by_component_id
+  assignment:
+    train: [pa-array-001]
+    validation: [pa-array-002]
+    test: [pa-array-002]
+    inference: [pa-array-003]
+labels:
+  derivation: fixture 无标签表；正式数据集的 HI/RUL 标签由预处理流程统一派生（见 docs/DATA_DICTIONARY.md），遥测与标签严格分离。
+  file: labels.fixture-none.csv
+sources:
+  - name: phased-array-telemetry-fixture
+    version: "1.0.0"
+    url: null
+    license: internal
+    sha256: 13aee77689190d51108f6b37b9fdc2012cbd036f3b7fb3c82b0397c1bac2d7dd
+    processing_script: tests/fixtures/generate_fixtures.py
+prediction:
+  primary_telemetry: array_gain_db
+  degradation_direction: decreasing
+  failure_threshold: -3.0
+  forecast_horizon: 12
+  rul_unit: hours

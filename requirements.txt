@@ -12,3 +12,5 @@ h5py==3.16.0
 matplotlib==3.10.9
 pytest==9.0.3
 tqdm==4.67.3
+# 契约 v1.1 时序输入与复现输出 Schema 校验 (component/ 与 reproduce_judge/full)
+jsonschema==4.25.1

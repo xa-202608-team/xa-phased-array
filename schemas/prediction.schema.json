@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://xa-202608-team.github.io/contracts/prediction.schema.json",
+  "title": "Prediction output document",
+  "description": "预测输出契约：python -m component.predict 产出的单次预测结果文档。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "contract_version",
+    "component",
+    "git_commit",
+    "telemetry_name",
+    "generated_at",
+    "forecasts",
+    "status"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.1.0"},
+    "contract_version": {"const": "component-contract-v1.1.0"},
+    "component": {"enum": ["battery", "phased_array", "wheel"]},
+    "git_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "telemetry_name": {"type": "string", "minLength": 1},
+    "generated_at": {"type": "string", "format": "date-time", "minLength": 1},
+    "forecasts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "component_id",
+          "origin_timestamp",
+          "horizon_step",
+          "predicted_timestamp",
+          "predicted_value",
+          "unit"
+        ],
+        "properties": {
+          "component_id": {"type": "string", "minLength": 1},
+          "origin_timestamp": {"type": "string", "format": "date-time", "minLength": 1},
+          "horizon_step": {"type": "integer", "minimum": 1},
+          "predicted_timestamp": {"type": "string", "format": "date-time", "minLength": 1},
+          "predicted_value": {"type": "number"},
+          "unit": {"type": "string", "minLength": 1},
+          "rul": {"type": "number", "minimum": 0},
+          "rul_unit": {"type": "string", "minLength": 1},
+          "uncertainty_lower": {"type": "number"},
+          "uncertainty_upper": {"type": "number"}
+        }
+      }
+    },
+    "status": {"const": "PREDICTION_OK"}
+  }
+}
