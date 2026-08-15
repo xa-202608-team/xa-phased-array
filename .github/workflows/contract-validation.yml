@@ -1,0 +1,44 @@
+name: contract-validation
+
+on:
+  pull_request:
+  push:
+    branches: [main, "dev/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4d402717a8664d1
+        with:
+          python-version: "3.12"
+      - name: 安装轻量依赖（契约校验不需 torch）
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest==9.0.3 jsonschema==4.25.1 PyYAML==6.0.3 numpy pandas
+      - name: 全部契约 Schema 可编译（v1.0 三个 + v1.1 五个）
+        run: |
+          python - <<'EOF'
+          import glob, json, sys
+          import jsonschema
+          files = sorted(glob.glob("schemas/*.schema.json"))
+          expected = {
+              "dataset-metadata.schema.json", "expected_metrics.schema.json",
+              "handoff-manifest.schema.json", "labels.schema.json",
+              "manifest.schema.json", "metrics.schema.json",
+              "prediction.schema.json", "telemetry.schema.json",
+          }
+          assert {f.split("/")[-1] for f in files} == expected, files
+          for f in files:
+              schema = json.load(open(f, encoding="utf-8"))
+              cls = jsonschema.validators.validator_for(schema)
+              cls.check_schema(schema)
+              print("ok", f)
+          EOF
+      - name: Schema 快照 vs 契约 Tag + fixture/元数据/预测契约测试
+        run: python -m pytest tests/test_component_predict.py tests/test_simulation_reproduce_docs.py -q

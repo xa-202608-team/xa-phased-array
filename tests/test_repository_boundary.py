@@ -11,6 +11,8 @@
 import subprocess
 from pathlib import Path
 
+import pytest
+
 # 设计批准的槽位描述文件（本地维护；若被强制跟踪亦不豁免扩展名规则）
 APPROVED_SLOT_FILES = {
     "data/README.md",
@@ -33,8 +35,15 @@ def _tracked_files(root: Path) -> list[str]:
     return [p for p in out.split("\0") if p]
 
 
+def _skip_outside_git_repo(root: Path) -> None:
+    """容器/导出环境无 .git（.dockerignore 排除）时本守护无意义，显式跳过。"""
+    if not (root / ".git").exists():
+        pytest.skip("不在 git 仓库内（容器/导出环境），仓库边界守护不适用")
+
+
 def test_no_forbidden_tracked_artifacts() -> None:
     root = Path(__file__).resolve().parents[1]
+    _skip_outside_git_repo(root)
     tracked = _tracked_files(root)
     forbidden = [
         path
@@ -47,6 +56,7 @@ def test_no_forbidden_tracked_artifacts() -> None:
 
 def test_no_tracked_artifact_suffixes() -> None:
     root = Path(__file__).resolve().parents[1]
+    _skip_outside_git_repo(root)
     tracked = _tracked_files(root)
     offenders = [p for p in tracked if p.lower().endswith(FORBIDDEN_SUFFIXES)]
     assert offenders == [], f"工件扩展名文件被跟踪: {offenders}"
@@ -54,6 +64,7 @@ def test_no_tracked_artifact_suffixes() -> None:
 
 def test_no_tracked_pycache_or_pytest_cache() -> None:
     root = Path(__file__).resolve().parents[1]
+    _skip_outside_git_repo(root)
     tracked = _tracked_files(root)
     offenders = [
         p

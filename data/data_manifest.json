@@ -1,6 +1,68 @@
 {
   "schema_version": "1.1.0",
   "component": "phased_array",
-  "status": "LOCAL_ARTIFACT_REQUIRED",
-  "entries": []
+  "status": "SOURCES_VERIFIED",
+  "verified_at": "2026-08-15",
+  "note": "来源与重建方式已逐项核实（docs/DATA_DICTIONARY.md）。本地工件按数据治理不入库；sha256 为 null 的条目在本地生成后经 reproduce_judge/full 的 sim_manifest.json 与 source_report.json 如实登记，不预填编造哈希；本地绝对路径不写入本清单。",
+  "entries": [
+    {
+      "name": "NASA-MOSFET-Thermal-Overstress-Aging",
+      "kind": "external_public_dataset",
+      "role": "source_domain_raw",
+      "redistributable": false,
+      "sha256": null,
+      "rebuild": "手动下载（NASA 数据门户，原始 MAT 包约 7.85GB）+ src/data/preprocess/mosfet_real_loader_v2.py 生成 schema_v3 特征；步骤见 docs/DATA_DICTIONARY.md §7",
+      "verified_note": "公开退化数据集（NASA Celaya MOSFET 热过应力老化）；因体积与再分发限制不入库，仅本地持有"
+    },
+    {
+      "name": "mosfet_canonical.h5",
+      "kind": "local_artifact",
+      "role": "source_domain_canonical_features",
+      "schema": "device_canonical_v1 (4 维: p_drift_norm/T_dev_C/duty/drive_norm)",
+      "redistributable": false,
+      "sha256": null,
+      "rebuild": "scripts/prepare_source_data.py（自动判定 source_mode=canonical_nasa/nasa_real/synthetic；synthetic 形态仅管线连通性冒烟，不得当正式源域）",
+      "verified_note": "canonical 为真实 NASA 特征的统一 4 维转换产物；本地无真实源域时由合成数据生成并在 H5 metadata 标 source_mode=synthetic"
+    },
+    {
+      "name": "sim_v2-phased_array_subdose_v2",
+      "kind": "local_simulation",
+      "role": "target_domain_simulation_channel_level",
+      "dynamics_id": "phased_array_subdose_v2",
+      "redistributable": true,
+      "sha256": null,
+      "rebuild": "scripts/generate_simulation.py（--subdose on，seed=42，n_traj=200）；实际 config SHA256 与 H5 哈希写入运行时 sim_manifest.json",
+      "verified_note": "本地 GaN T/R 三级退化仿真生成（GaN 器件参数为文献量级标定的仿真值，非真实 GaN 遥测）；三级结构冻结于 docs/simulation/PHYSICS_CHAIN.yaml"
+    },
+    {
+      "name": "sim_v1-leo_coupled_v1",
+      "kind": "local_simulation",
+      "role": "target_domain_simulation_service_level_ablation",
+      "dynamics_id": "leo_coupled_v1",
+      "redistributable": true,
+      "sha256": null,
+      "rebuild": "scripts/generate_simulation.py（--subdose off，seed=42，n_traj=200）；cross_level_transfer 服务级层级消融专用",
+      "verified_note": "同上（旧标量损伤路径，与 sim_v2 共用三级链第三级）"
+    },
+    {
+      "name": "channel_features.h5",
+      "kind": "local_artifact",
+      "role": "channel_level_features",
+      "schema": "schema_ch_v1 (canonical 4 维 + hi/z/rul 标签)",
+      "redistributable": false,
+      "sha256": null,
+      "rebuild": "python -m src.sim.build_channel_hi --config configs/phased_array.yaml（读 sim_v2）",
+      "verified_note": "标签派生规则见 docs/DATA_DICTIONARY.md §6；失效通道截断到 EOL（P0-1）"
+    },
+    {
+      "name": "target_features.h5",
+      "kind": "local_artifact",
+      "role": "service_level_features",
+      "schema": "schema_v1 (x_global 6 维 + x_nodes 16x6)",
+      "redistributable": false,
+      "sha256": null,
+      "rebuild": "python -m src.sim.build_array_hi --config configs/phased_array.yaml（读 sim_v1）",
+      "verified_note": "D_EOL 取 config 预固定 0.5765（P0-3，不遍历含 test 的 eol）"
+    }
+  ]
 }

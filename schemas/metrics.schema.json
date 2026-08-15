@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "component", "run_id", "mode", "metrics", "conclusion"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "component": {"enum": ["battery", "phased_array", "wheel"]},
+    "run_id": {"type": "string", "minLength": 1},
+    "mode": {"enum": ["quick", "full"]},
+    "metrics": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {"type": "number"}
+    },
+    "conclusion": {
+      "enum": [
+        "POSITIVE_TRANSFER_SUPPORTED",
+        "TRANSFER_INCONCLUSIVE",
+        "NO_POSITIVE_TRANSFER_SUPPORTED",
+        "BASELINE_ONLY"
+      ]
+    }
+  }
+}
