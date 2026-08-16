@@ -5,7 +5,7 @@
 `xa-phased-array` 承载 2026 挑战杯 LEO 卫星健康管理项目中**相控阵天线组件**
 的干净代码基线：GaN T/R 组件 → 阵列 → 链路三级退化数字孪生、阵列优雅降级
 建模与跨域迁移（HI 动力学层 / 观测层双路径）。当前组件契约版本：
-`component-contract-v1.0.0`；正式组件版本只能由 `@xa-202608-team/integrators` 签发。
+`component-contract-v1.1.0`；正式组件版本只能由 `@xa-202608-team/integrators` 签发。
 
 ## 本地基线与工件槽位
 
@@ -26,13 +26,15 @@
 
 `handoff/artifact-map.yaml` 定义本地槽位 → RC 交付 payload 的映射：
 
-- `data` → `04_数据/phased_array`（dataset）
-- `checkpoints` → `03_代码/components/phased_array/checkpoints`（checkpoint）
-- `results/reference` → `05_结果/reference/phased_array`（reference_result）
+- `handoff/payload/data` → `04_数据/phased_array`（dataset）
+- `handoff/payload/checkpoints` → `03_代码/components/phased_array/checkpoints`（checkpoint）
+- `handoff/payload/results/reference` → `05_结果/reference/phased_array`（reference_result）
 
 约束：映射只允许**相对路径**；本地工件不存在时 RC 打包必须**失败**，而不是
 生成空包。打包前需将 `data_manifest.json` / `checkpoint_manifest.json` 的
 `entries` 补登完整（含 sha256），`public_summary.json` 仅在指标逐项核实后更新。
+
+> `artifact-map` 的 `local` 一律指向 `handoff/payload/` 白名单 staging（一次性、可删除的派生视图）；整槽位直映禁止。RC 必填元数据（`contract_version`/`environment`/`random_seeds`/`commands`）以 `tests/test_handoff_contract.py` 守护，语义见 `xa-integration/tools/build_rc_artifact.py`。
 
 ## 交接要点
 

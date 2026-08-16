@@ -40,7 +40,7 @@
       "name": "baseline_constant_rmse_5seed",
       "value": 0.3917,
       "unit": "normalized RUL RMSE",
-      "source": "docs/MODELING.md §6（最强非学习基线，5 seed 均值；主模型为其 1.55×）"
+      "source": "docs/MODELING.md §6（最强非学习基线，5 seed 均值；约为主模型的 1.55 倍，主模型更优）"
     },
     {
       "name": "baseline_arrhenius_rmse_5seed",

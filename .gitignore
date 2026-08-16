@@ -31,9 +31,13 @@ wandb/
 !/results/README.md
 !/results/public_summary.json
 !/results/expected_metrics.json
+!/results/results_manifest.json
 /checkpoints/**
 !/checkpoints/README.md
 !/checkpoints/checkpoint_manifest.json
+
+# RC 白名单 staging：一次性、可删除的派生视图，构建 RC 前在此装配 payload（设计 §5.3）
+/handoff/payload/
 
 # 私有协作目录（PR body 等本地文件，公开扫描器对 .private/** 一律判 CRITICAL）
 .private/

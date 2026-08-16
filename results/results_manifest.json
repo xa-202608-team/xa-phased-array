@@ -1,0 +1,99 @@
+{
+  "schema_version": "1.1.0",
+  "component": "phased_array",
+  "status": "SOURCES_VERIFIED",
+  "verified_at": "2026-08-16",
+  "note": "results 槽位白名单清单（staging 装配与仓库边界守护消费，dry-run 评审补机制）。5 个结果文件为 legacy 快照迁入（metrics 4 + run log 1），size/sha256 为 2026-08-16 磁盘实测，不预填编造；结果工件本体按治理不入库（.log 扩展名任何位置均不受跟踪）；正式 RC 批准前 rc_payload=false，批准时按裁决翻转；指标门状态见 expected_metrics.json。",
+  "entries": [
+    {
+      "path": "reference/all_metrics_phased_array.json",
+      "size": 4195,
+      "sha256": "65e62f0f6f798245e53f593d39d0bee99939814c6f0f2ea9c288d6e86c91020d",
+      "role": "reference_metrics",
+      "random_seeds": [
+        42
+      ],
+      "command": "python -m src.experiments.run_groups --config configs/phased_array.yaml --seeds 5",
+      "config": "configs/phased_array.yaml",
+      "contract_version": "component-contract-v1.1.0",
+      "git_commit": "legacy-snapshot-2026-08",
+      "source_mode": "synthetic",
+      "redistributable": true,
+      "source_url": null,
+      "reproduce_status": "pending_legacy_verification",
+      "rc_payload": true
+    },
+    {
+      "path": "reference/arch_aligned_raw.jsonl",
+      "size": 1353,
+      "sha256": "b1f7d9451a5737479a8644908ae440371d512f5d6bb3718e466277469cead3c9",
+      "role": "reference_metrics",
+      "random_seeds": [
+        42
+      ],
+      "command": "python -m src.experiments.run_groups --config configs/phased_array.yaml --seeds 5",
+      "config": "configs/phased_array.yaml",
+      "contract_version": "component-contract-v1.1.0",
+      "git_commit": "legacy-snapshot-2026-08",
+      "source_mode": "synthetic",
+      "redistributable": true,
+      "source_url": null,
+      "reproduce_status": "pending_legacy_verification",
+      "rc_payload": true
+    },
+    {
+      "path": "reference/kshot_frozen.jsonl",
+      "size": 658,
+      "sha256": "73c0d511b5d5c06a5c47e50ca6969a7ea056c1a9f8a14efed8a40e70369ba055",
+      "role": "reference_metrics",
+      "random_seeds": [
+        42
+      ],
+      "command": "python -m src.experiments.run_groups --config configs/phased_array.yaml --seeds 5",
+      "config": "configs/phased_array.yaml",
+      "contract_version": "component-contract-v1.1.0",
+      "git_commit": "legacy-snapshot-2026-08",
+      "source_mode": "synthetic",
+      "redistributable": true,
+      "source_url": null,
+      "reproduce_status": "pending_legacy_verification",
+      "rc_payload": true
+    },
+    {
+      "path": "reference/metrics_phased_array.json",
+      "size": 367,
+      "sha256": "d97bb84e4e4996e75d2dc3b593ec6b3d532b644e40d13d00edacd96548f8bd98",
+      "role": "reference_metrics",
+      "random_seeds": [
+        42
+      ],
+      "command": "python -m src.experiments.run_groups --config configs/phased_array.yaml --seeds 5",
+      "config": "configs/phased_array.yaml",
+      "contract_version": "component-contract-v1.1.0",
+      "git_commit": "legacy-snapshot-2026-08",
+      "source_mode": "synthetic",
+      "redistributable": true,
+      "source_url": null,
+      "reproduce_status": "pending_legacy_verification",
+      "rc_payload": true
+    },
+    {
+      "path": "reference/runs/run_groups_gpu.log",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "role": "run_log",
+      "random_seeds": [
+        42
+      ],
+      "command": "python -m src.experiments.run_groups --config configs/phased_array.yaml --seeds 5",
+      "config": "configs/phased_array.yaml",
+      "contract_version": "component-contract-v1.1.0",
+      "git_commit": "legacy-snapshot-2026-08",
+      "source_mode": "synthetic",
+      "redistributable": true,
+      "source_url": null,
+      "reproduce_status": "pending_legacy_verification",
+      "rc_payload": true
+    }
+  ]
+}

@@ -2,7 +2,7 @@
 """仓库边界守护测试：本地工件槽位不得被跟踪。
 
 约束（与导入策略、公开泄漏扫描器语义一致）：
-- 根级 ``data/``、``results/``、``checkpoints/`` 是本地工件槽位，除七个批准
+- 根级 ``data/``、``results/``、``checkpoints/`` 是本地工件槽位，除八个批准
   描述文件外不得出现任何受跟踪文件；
 - 所有 ``.pt/.h5/.hdf5/.log`` 文件一律不受跟踪（无论目录）；
 - 测试基于 ``git ls-files -z``（与扫描器同源），因此只做静态索引断言，
@@ -20,6 +20,7 @@ APPROVED_SLOT_FILES = {
     "results/README.md",
     "results/public_summary.json",
     "results/expected_metrics.json",
+    "results/results_manifest.json",
     "checkpoints/README.md",
     "checkpoints/checkpoint_manifest.json",
 }
@@ -74,3 +75,28 @@ def test_no_tracked_pycache_or_pytest_cache() -> None:
         or p.endswith(".pyc")
     ]
     assert offenders == [], f"缓存产物被跟踪: {offenders}"
+
+
+def test_handoff_payload_staging_ignored() -> None:
+    """handoff/payload/ 白名单 staging 必须被忽略且永不受跟踪（设计 §5.3/§10）。"""
+    root = Path(__file__).resolve().parents[1]
+    _skip_outside_git_repo(root)
+    probe = root / "handoff" / "payload" / ".keep"
+    probe.parent.mkdir(parents=True, exist_ok=True)
+    probe.touch()
+    try:
+        out = subprocess.run(
+            ["git", "check-ignore", "handoff/payload/.keep"],
+            cwd=root, capture_output=True,
+        )
+        assert out.returncode == 0, "handoff/payload/ 未被 .gitignore 忽略"
+        offenders = [
+            p for p in _tracked_files(root) if p.startswith("handoff/payload/")
+        ]
+        assert offenders == [], f"staging 内容被跟踪: {offenders}"
+    finally:
+        probe.unlink(missing_ok=True)
+        try:
+            probe.parent.rmdir()
+        except OSError:
+            pass

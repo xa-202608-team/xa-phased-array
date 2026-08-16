@@ -1,6 +1,39 @@
+# 工件映射：本地白名单 staging -> RC 交付 payload（设计 §5.3/§6）
+# local 只允许 handoff/payload/ 下的装配视图，禁止直接映射 data/、checkpoints/ 槽位，
+# 防止 NASA 原始数据误带与 checkpoints README/manifest 和 git archive 代码快照成员冲突。
 schema_version: 1.1.0
 component: phased_array
+contract_version: component-contract-v1.1.0
+environment:
+  python: "3.12.13"
+  pytorch: "2.11.0+cu130"
+  os: "Windows-10"
+  device: "cpu"
+random_seeds: [42]
+public_summary: >-
+  主模型 target_only_gru 5-seed 归一化 RUL RMSE=0.2521（最强非学习基线 constant
+  RMSE=0.3917，约为主模型的 1.55 倍，主模型更优）；跨域迁移结论
+  NO_POSITIVE_TRANSFER_SUPPORTED（ΔRMSE 95%CI 全负，源 ckpt 显著负迁移）。
+  完整冻结数字与逐项来源见 results/public_summary.json 与 docs/MODELING.md §6。
+commands:
+  - "python scripts/reproduce_judge.py --output <OUTPUT_DIR>"
+  - "python scripts/reproduce_full.py --output <OUTPUT_DIR>"
 mappings:
-  - {local: data, payload: 04_数据/phased_array, role: dataset}
-  - {local: checkpoints, payload: 03_代码/components/phased_array/checkpoints, role: checkpoint}
-  - {local: results/reference, payload: 05_结果/reference/phased_array, role: reference_result}
+  - local: handoff/payload/data
+    payload: 04_数据/phased_array
+    role: dataset
+    redistributable: true   # 目录级政策；逐文件再分发状态以 data_manifest.json entries 为准
+    source_url: null
+    processing_provenance: "目标域: scripts/generate_simulation.py (seed=42); 源域特征: scripts/prepare_source_data.py"
+  - local: handoff/payload/checkpoints
+    payload: 03_代码/components/phased_array/checkpoints
+    role: checkpoint
+    redistributable: true
+    source_url: null
+    processing_provenance: "scripts/run_all.sh --fast 源域预训练 (GRU/TCN)"
+  - local: handoff/payload/results/reference
+    payload: 05_结果/reference/phased_array
+    role: reference_result
+    redistributable: true
+    source_url: null
+    processing_provenance: "src/experiments/run_groups.py 对比实验编排"

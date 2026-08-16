@@ -2,5 +2,7 @@
   "schema_version": "1.1.0",
   "component": "phased_array",
   "status": "NOT_YET_VERIFIED",
-  "metrics": []
+  "metrics": [],
+  "gate_status": "NOT_ENABLED",
+  "gate_reason": "judge 冒烟级 8 组 RMSE 与旧 reference 精确一致作为替代证据；正式容差需 multi-seed full 复现后冻结"
 }
