@@ -28,6 +28,11 @@ def test_artifact_map_required_keys() -> None:
     commands = data["commands"]
     assert isinstance(commands, list) and commands
     assert all(isinstance(c, str) and c for c in commands)
+    for mapping in data["mappings"]:
+        payload = mapping.get("payload")
+        assert isinstance(payload, str) and payload, (
+            f"mapping {mapping.get('local')!r} 必须有非空 payload 键（RC 交付目标路径）"
+        )
 
 
 def test_artifact_map_maps_whitelist_staging_only() -> None:
@@ -41,3 +46,6 @@ def test_handoff_md_declares_v1_1_0() -> None:
     root = Path(__file__).resolve().parents[1]
     text = (root / "handoff" / "HANDOFF.md").read_text(encoding="utf-8")
     assert "component-contract-v1.1.0" in text
+    assert "component-contract-v1.0.0" not in text, (
+        "HANDOFF.md 不得残留旧契约版本 component-contract-v1.0.0（已升级 v1.1.0）"
+    )

@@ -10,6 +10,10 @@
   只有当指标来源逐项核实后才允许填入，**不得编造数字**。
 - `expected_metrics.json`：复现验证的期望指标门槛，同样在未核实前保持
   `NOT_YET_VERIFIED` + 空 `metrics`。
+- 槽位白名单清单登记在 `results_manifest.json`（`schema_version=1.1.0`，
+  条目含 size/sha256 与 `rc_payload` 开关，批准进 RC payload 时按裁决逐项翻转；
+  `scripts/stage_handoff_payload.py` 装配 staging、
+  `scripts/scan_handoff_payload.py --repo-root` 以其为批准集扫描）。
 - 参考结果与 RC payload 的映射见 `handoff/artifact-map.yaml`
   （`local: results/reference` → `05_结果/reference/phased_array`）。本地参考
   结果不存在时 RC 打包必须失败，而不是生成空包。
