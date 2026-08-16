@@ -4,8 +4,16 @@
 规则：未声明文件、NASA 原始数据命名签名、小文本文件内嵌绝对路径、
 符号链接、秘密信息签名、与 git archive 代码快照重名的成员。
 违规非空时 CLI 退出码 1，阻断 RC 构建。
+
+approved 白名单来源：
+- ``--repo-root <path>``：从组件仓三槽位 manifest（data/data_manifest.json、
+  checkpoints/checkpoint_manifest.json、results/results_manifest.json）中
+  rc_payload=true 条目派生（消除"从 staging 现存文件自批准"）；results 条目
+  path 已含 reference/ 前缀，与 staging 布局 handoff/payload/results/<path> 一致。
+- 不带 --repo-root：从 staging 现存文件构造（旧行为，向后兼容）。
 """
 import argparse
+import json
 import re
 from pathlib import Path
 
@@ -13,6 +21,31 @@ NASA_RAW_PATTERN = re.compile(r"(nasa|mosfet_raw|raw_.+\.(mat|txt)|original)", r
 ABSOLUTE_PATH_PATTERN = re.compile(r"([A-Za-z]:[/\\]{1,2}|/home/|/Users/)")
 SECRET_PATTERN = re.compile(r"(api[_-]?key|token|password|BEGIN (RSA|OPENSSH) PRIVATE KEY)", re.IGNORECASE)
 TEXT_SUFFIXES = {".json", ".jsonl", ".md", ".txt", ".yaml", ".yml", ".csv", ".log", ".py"}
+
+# 组件仓三槽位 manifest 的相对位置（与 stage_handoff_payload 同源）
+MANIFEST_SLOTS = {
+    "data": Path("data") / "data_manifest.json",
+    "checkpoints": Path("checkpoints") / "checkpoint_manifest.json",
+    "results": Path("results") / "results_manifest.json",
+}
+
+
+def _approved_from_manifests(repo_root: Path) -> set:
+    """从组件仓三 manifest 的 rc_payload=true 条目派生 staging 白名单。
+
+    staging 相对路径形态为 "<槽位>/<条目 path>"（results 条目 path 已含
+    reference/ 前缀，与 handoff/payload/results/<path> 布局一致）。
+    """
+    approved = set()
+    for slot, rel_manifest in MANIFEST_SLOTS.items():
+        manifest_path = Path(repo_root) / rel_manifest
+        if not manifest_path.is_file():
+            continue
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        for entry in data.get("entries", []):
+            if entry.get("rc_payload"):
+                approved.add(f"{slot}/{entry['path']}")
+    return approved
 
 
 def scan(staging: Path, approved: set, code_members: set) -> list:
@@ -42,16 +75,26 @@ def scan(staging: Path, approved: set, code_members: set) -> list:
     return violations
 
 
-def _main() -> int:
+def _main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--staging", required=True, help="handoff/payload 目录")
-    args = parser.parse_args()
+    parser.add_argument(
+        "--repo-root",
+        default=None,
+        help="组件仓库根目录：提供时 approved 从三槽位 manifest 的 "
+        "rc_payload=true 条目派生（消除自批准）；缺省时保持从 staging "
+        "现存文件构造的旧行为",
+    )
+    args = parser.parse_args(argv)
     staging = Path(args.staging)
-    approved = {
-        p.relative_to(staging).as_posix()
-        for p in staging.rglob("*")
-        if p.is_file()
-    }
+    if args.repo_root:
+        approved = _approved_from_manifests(Path(args.repo_root))
+    else:
+        approved = {
+            p.relative_to(staging).as_posix()
+            for p in staging.rglob("*")
+            if p.is_file()
+        }
     violations = scan(staging, approved=approved, code_members=set())
     for line in violations:
         print(line)
