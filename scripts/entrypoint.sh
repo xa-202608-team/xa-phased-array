@@ -17,7 +17,10 @@ export PYTHONDONTWRITEBYTECODE=${PYTHONDONTWRITEBYTECODE:-1}
 
 CFG="configs/phased_array.yaml"
 CANONICAL_H5="data/features/phased_array/schema_v4/source/mosfet_canonical.h5"
-CANONICAL_MOUNT="/artifacts/data/mosfet_canonical.h5"
+# 设计 §7: 层级工件布局优先 (/artifacts/data 保持交付包内部相对层级),
+# legacy 平挂布局仅作回退并警告, 不得继续假定文件直挂 /artifacts/data/ 根
+CANONICAL_MOUNT_HIER="/artifacts/data/features/phased_array/schema_v4/source/mosfet_canonical.h5"
+CANONICAL_MOUNT_LEGACY="/artifacts/data/mosfet_canonical.h5"
 CKPT="checkpoints/source_phased_array_tcn_pretrain.pt"
 CKPT_MOUNT="/artifacts/checkpoints/source_phased_array_tcn_pretrain.pt"
 
@@ -25,10 +28,14 @@ step() { echo ""; echo "========== $1 =========="; }
 
 mount_artifacts() {
     # 只读挂载 -> 复制进工作区 (挂载点只读, 工作区可写); 缺失不报错, 走 synthetic
-    if [ -f "$CANONICAL_MOUNT" ]; then
+    if [ -f "$CANONICAL_MOUNT_HIER" ]; then
         mkdir -p "$(dirname "$CANONICAL_H5")"
-        cp "$CANONICAL_MOUNT" "$CANONICAL_H5"
-        echo "  >> 已从只读挂载载入 canonical H5"
+        cp "$CANONICAL_MOUNT_HIER" "$CANONICAL_H5"
+        echo "  >> 已从只读挂载载入 canonical H5 (层级工件布局, 设计 §7)"
+    elif [ -f "$CANONICAL_MOUNT_LEGACY" ]; then
+        mkdir -p "$(dirname "$CANONICAL_H5")"
+        cp "$CANONICAL_MOUNT_LEGACY" "$CANONICAL_H5"
+        echo "  >> [WARN] legacy 平挂布局, 请迁移到层级工件布局 (设计 §7); 已回退读取 $CANONICAL_MOUNT_LEGACY"
     else
         echo "  >> /artifacts/data 无 canonical H5 -> judge/full 将走 synthetic 源域 (manifest 如实标注)"
     fi
