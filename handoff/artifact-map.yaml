@@ -11,10 +11,10 @@ environment:
   device: "cpu"
 random_seeds: [42]
 public_summary: >-
-  主模型 target_only_gru 5-seed 归一化 RUL RMSE=0.2521（最强非学习基线 constant 的
-  1.55 倍）；跨域迁移结论 NO_POSITIVE_TRANSFER_SUPPORTED（ΔRMSE 95%CI 全负，源 ckpt
-  显著负迁移）。完整冻结数字与逐项来源见 results/public_summary.json 与
-  docs/MODELING.md §6。
+  主模型 target_only_gru 5-seed 归一化 RUL RMSE=0.2521（最强非学习基线 constant
+  RMSE=0.3917，约为主模型的 1.55 倍，主模型更优）；跨域迁移结论
+  NO_POSITIVE_TRANSFER_SUPPORTED（ΔRMSE 95%CI 全负，源 ckpt 显著负迁移）。
+  完整冻结数字与逐项来源见 results/public_summary.json 与 docs/MODELING.md §6。
 commands:
   - "python scripts/reproduce_judge.py --output <OUTPUT_DIR>"
   - "python scripts/reproduce_full.py --output <OUTPUT_DIR>"
