@@ -118,3 +118,20 @@ def test_stage_rejects_path_escape_and_absolute(tmp_path):
             assert bad in str(exc)
         else:
             raise AssertionError(f"越权路径必须抛 ValueError: {bad}")
+
+
+def test_stage_guard_source_rejects_windows_drive_letters():
+    """守卫源码须含盘符形态拒绝（跨平台一致）。
+
+    Path("C:/x.h5").is_absolute() 在 POSIX 上为 False，仅靠 is_absolute()
+    会让盘符路径在 Linux 容器内（Dockerfile 构建跑全量 pytest）漏拒；
+    守卫必须显式含 ``re.match(r"^[A-Za-z]:", rel)`` 形态的盘符正则。
+    文本守护断言，风格同 test_entrypoint_layout.py。
+    """
+    source = (
+        Path(__file__).resolve().parents[1] / "scripts" / "stage_handoff_payload.py"
+    ).read_text(encoding="utf-8")
+    assert 're.match(r"^[A-Za-z]:", rel)' in source, (
+        "路径守卫须含盘符正则 re.match(r\"^[A-Za-z]:\", rel)（POSIX 上 "
+        "is_absolute() 对 'C:/x.h5' 为 False，会漏拒）"
+    )
