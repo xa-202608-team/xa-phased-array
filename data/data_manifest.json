@@ -63,6 +63,274 @@
       "sha256": null,
       "rebuild": "python -m src.sim.build_array_hi --config configs/phased_array.yaml（读 sim_v1）",
       "verified_note": "D_EOL 取 config 预固定 0.5765（P0-3，不遍历含 test 的 eol）"
+    },
+    {
+      "path": "features/phased_array/schema_v4/source/mosfet_canonical.h5",
+      "size": 897024,
+      "sha256": "e44db0b459770219d179b42ef723b7999b78655259c62ad1d3291a8e49345ed0",
+      "role": "source_domain_canonical_features",
+      "random_seeds": null,
+      "command": "python scripts/prepare_source_data.py",
+      "config": null,
+      "contract_version": "component-contract-v1.1.0",
+      "git_commit": "legacy-snapshot-2026-08",
+      "source_mode": "derived_from_public_dataset",
+      "redistributable": false,
+      "source_url": null,
+      "reproduce_status": "pending_legacy_verification",
+      "rc_payload": false
+    },
+    {
+      "path": "features/phased_array/schema_ch_v1/target/channel_features.h5",
+      "size": 1220676,
+      "sha256": "6db3d801184e027fcb6b7ed984760ddb35a75925c7d385dfc6dbfe0ac293c7bd",
+      "role": "channel_level_features",
+      "random_seeds": [
+        42
+      ],
+      "command": "python -m src.sim.build_channel_hi --config configs/phased_array.yaml",
+      "config": "configs/phased_array.yaml",
+      "contract_version": "component-contract-v1.1.0",
+      "git_commit": "legacy-snapshot-2026-08",
+      "source_mode": "synthetic",
+      "redistributable": false,
+      "source_url": null,
+      "reproduce_status": "pending_legacy_verification",
+      "rc_payload": false
+    },
+    {
+      "path": "features/phased_array/schema_v1/target/target_features.h5",
+      "size": 1043822,
+      "sha256": "0f1ef135222fa21038ba3d1759c3e0b22bc9857d3c6ad23910432847431ef290",
+      "role": "service_level_features",
+      "random_seeds": [
+        42
+      ],
+      "command": "python -m src.sim.build_array_hi --config configs/phased_array.yaml",
+      "config": "configs/phased_array.yaml",
+      "contract_version": "component-contract-v1.1.0",
+      "git_commit": "legacy-snapshot-2026-08",
+      "source_mode": "synthetic",
+      "redistributable": false,
+      "source_url": null,
+      "reproduce_status": "pending_legacy_verification",
+      "rc_payload": false
+    },
+    {
+      "path": "simulated/phased_array/sim_v1/seed_42/params.json",
+      "size": 2189,
+      "sha256": "61edd8082cdb0d5e56137787ef5e3cf0a7f669d62b7160074d407b3111d5aa20",
+      "role": "simulated_target_domain",
+      "random_seeds": [
+        42
+      ],
+      "command": "python scripts/generate_simulation.py",
+      "config": "configs/phased_array.yaml",
+      "contract_version": "component-contract-v1.1.0",
+      "git_commit": "legacy-snapshot-2026-08",
+      "source_mode": "synthetic",
+      "redistributable": true,
+      "source_url": null,
+      "reproduce_status": "pending_legacy_verification",
+      "rc_payload": false
+    },
+    {
+      "path": "simulated/phased_array/sim_v1/seed_42/phased_array_all.h5",
+      "size": 1983508,
+      "sha256": "4851418188ec813926de6df1741fb6e3577062cf764df80914817b861ee99fed",
+      "role": "simulated_target_domain",
+      "random_seeds": [
+        42
+      ],
+      "command": "python scripts/generate_simulation.py",
+      "config": "configs/phased_array.yaml",
+      "contract_version": "component-contract-v1.1.0",
+      "git_commit": "legacy-snapshot-2026-08",
+      "source_mode": "synthetic",
+      "redistributable": true,
+      "source_url": null,
+      "reproduce_status": "pending_legacy_verification",
+      "rc_payload": false
+    },
+    {
+      "path": "simulated/phased_array/sim_v1/seed_42/traj_000.csv",
+      "size": 224701,
+      "sha256": "d4d722f16668890a85d7f7ed875b2ee55eef74ed3fd8eff495a35d5de827413a",
+      "role": "simulated_target_domain",
+      "random_seeds": [
+        42
+      ],
+      "command": "python scripts/generate_simulation.py",
+      "config": "configs/phased_array.yaml",
+      "contract_version": "component-contract-v1.1.0",
+      "git_commit": "legacy-snapshot-2026-08",
+      "source_mode": "synthetic",
+      "redistributable": true,
+      "source_url": null,
+      "reproduce_status": "pending_legacy_verification",
+      "rc_payload": false
+    },
+    {
+      "path": "simulated/phased_array/sim_v1/seed_42/traj_001.csv",
+      "size": 253447,
+      "sha256": "9705e8a9de0ef663f492e6250989efe39034d86588f6432b9db6cf6c58e14a6c",
+      "role": "simulated_target_domain",
+      "random_seeds": [
+        42
+      ],
+      "command": "python scripts/generate_simulation.py",
+      "config": "configs/phased_array.yaml",
+      "contract_version": "component-contract-v1.1.0",
+      "git_commit": "legacy-snapshot-2026-08",
+      "source_mode": "synthetic",
+      "redistributable": true,
+      "source_url": null,
+      "reproduce_status": "pending_legacy_verification",
+      "rc_payload": false
+    },
+    {
+      "path": "simulated/phased_array/sim_v1/seed_42/traj_002.csv",
+      "size": 256545,
+      "sha256": "6633fbca31171a62fc53af7a08c4beaa54d74144de9cf6359d14219299582e36",
+      "role": "simulated_target_domain",
+      "random_seeds": [
+        42
+      ],
+      "command": "python scripts/generate_simulation.py",
+      "config": "configs/phased_array.yaml",
+      "contract_version": "component-contract-v1.1.0",
+      "git_commit": "legacy-snapshot-2026-08",
+      "source_mode": "synthetic",
+      "redistributable": true,
+      "source_url": null,
+      "reproduce_status": "pending_legacy_verification",
+      "rc_payload": false
+    },
+    {
+      "path": "simulated/phased_array/sim_v1/seed_42/traj_003.csv",
+      "size": 254386,
+      "sha256": "c0e741c1732931fafe1444007f1012fd6d6fece9815677ae5185568401c4ddcd",
+      "role": "simulated_target_domain",
+      "random_seeds": [
+        42
+      ],
+      "command": "python scripts/generate_simulation.py",
+      "config": "configs/phased_array.yaml",
+      "contract_version": "component-contract-v1.1.0",
+      "git_commit": "legacy-snapshot-2026-08",
+      "source_mode": "synthetic",
+      "redistributable": true,
+      "source_url": null,
+      "reproduce_status": "pending_legacy_verification",
+      "rc_payload": false
+    },
+    {
+      "path": "simulated/phased_array/sim_v2/seed_42/params.json",
+      "size": 2189,
+      "sha256": "61edd8082cdb0d5e56137787ef5e3cf0a7f669d62b7160074d407b3111d5aa20",
+      "role": "simulated_target_domain",
+      "random_seeds": [
+        42
+      ],
+      "command": "python scripts/generate_simulation.py",
+      "config": "configs/phased_array.yaml",
+      "contract_version": "component-contract-v1.1.0",
+      "git_commit": "legacy-snapshot-2026-08",
+      "source_mode": "synthetic",
+      "redistributable": true,
+      "source_url": null,
+      "reproduce_status": "pending_legacy_verification",
+      "rc_payload": false
+    },
+    {
+      "path": "simulated/phased_array/sim_v2/seed_42/phased_array_all.h5",
+      "size": 2203094,
+      "sha256": "b05429fa95e06480880dd854daaf8172503a3d90df6a33fd63ddffa409a962d7",
+      "role": "simulated_target_domain",
+      "random_seeds": [
+        42
+      ],
+      "command": "python scripts/generate_simulation.py",
+      "config": "configs/phased_array.yaml",
+      "contract_version": "component-contract-v1.1.0",
+      "git_commit": "legacy-snapshot-2026-08",
+      "source_mode": "synthetic",
+      "redistributable": true,
+      "source_url": null,
+      "reproduce_status": "pending_legacy_verification",
+      "rc_payload": false
+    },
+    {
+      "path": "simulated/phased_array/sim_v2/seed_42/traj_000.csv",
+      "size": 225742,
+      "sha256": "fff0fc53ee0c0e4e61645030bc2f7405be565344f67919ae97e4f75ae6a4f946",
+      "role": "simulated_target_domain",
+      "random_seeds": [
+        42
+      ],
+      "command": "python scripts/generate_simulation.py",
+      "config": "configs/phased_array.yaml",
+      "contract_version": "component-contract-v1.1.0",
+      "git_commit": "legacy-snapshot-2026-08",
+      "source_mode": "synthetic",
+      "redistributable": true,
+      "source_url": null,
+      "reproduce_status": "pending_legacy_verification",
+      "rc_payload": false
+    },
+    {
+      "path": "simulated/phased_array/sim_v2/seed_42/traj_001.csv",
+      "size": 254413,
+      "sha256": "7446022b66e788520e6e9e704a1a376c8a480194414e60bfed5245a7296ed5ef",
+      "role": "simulated_target_domain",
+      "random_seeds": [
+        42
+      ],
+      "command": "python scripts/generate_simulation.py",
+      "config": "configs/phased_array.yaml",
+      "contract_version": "component-contract-v1.1.0",
+      "git_commit": "legacy-snapshot-2026-08",
+      "source_mode": "synthetic",
+      "redistributable": true,
+      "source_url": null,
+      "reproduce_status": "pending_legacy_verification",
+      "rc_payload": false
+    },
+    {
+      "path": "simulated/phased_array/sim_v2/seed_42/traj_002.csv",
+      "size": 256388,
+      "sha256": "1d325f1e5ef036422d2b7d146d7bcc2b6420da9ee9b931c58f9be0a34bc47c94",
+      "role": "simulated_target_domain",
+      "random_seeds": [
+        42
+      ],
+      "command": "python scripts/generate_simulation.py",
+      "config": "configs/phased_array.yaml",
+      "contract_version": "component-contract-v1.1.0",
+      "git_commit": "legacy-snapshot-2026-08",
+      "source_mode": "synthetic",
+      "redistributable": true,
+      "source_url": null,
+      "reproduce_status": "pending_legacy_verification",
+      "rc_payload": false
+    },
+    {
+      "path": "simulated/phased_array/sim_v2/seed_42/traj_003.csv",
+      "size": 252441,
+      "sha256": "2b2e30fd30525c04a317d497b58e55392c5ff4a4b4d70064374ef0587c707676",
+      "role": "simulated_target_domain",
+      "random_seeds": [
+        42
+      ],
+      "command": "python scripts/generate_simulation.py",
+      "config": "configs/phased_array.yaml",
+      "contract_version": "component-contract-v1.1.0",
+      "git_commit": "legacy-snapshot-2026-08",
+      "source_mode": "synthetic",
+      "redistributable": true,
+      "source_url": null,
+      "reproduce_status": "pending_legacy_verification",
+      "rc_payload": false
     }
   ]
 }
