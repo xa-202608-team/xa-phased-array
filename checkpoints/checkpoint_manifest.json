@@ -16,8 +16,20 @@
       ],
       "status_note": "冻结结论 NO_POSITIVE_TRANSFER_SUPPORTED（docs/MODELING.md §6）：该 ckpt 在两种协议下均显著负迁移（init_control/full_control CI 全正），保留作负对照与归因链证据，主模型 target_only_gru 不依赖它",
       "rebuild": "python -m src.train.pretrain --config configs/phased_array.yaml --canonical（或 scripts/reproduce_full.py P2 自动产出）",
-      "sha256": null,
-      "tracked": false
+      "sha256": "dac4bd38ba4b28b54b72b9c786b99f581e0ca9a49accb355f8ac527e3d5e8946",
+      "tracked": false,
+      "path": "source_phased_array_tcn_pretrain.pt",
+      "size": 684571,
+      "random_seeds": null,
+      "command": "python -m src.train.pretrain --config configs/phased_array.yaml --canonical",
+      "config": "configs/phased_array.yaml",
+      "contract_version": "component-contract-v1.1.0",
+      "git_commit": "legacy-snapshot-2026-08",
+      "source_mode": "derived_from_public_dataset",
+      "redistributable": false,
+      "source_url": null,
+      "reproduce_status": "pending_legacy_verification",
+      "rc_payload": false
     },
     {
       "name": "baselines_channel.json",
@@ -35,6 +47,22 @@
       "rebuild": "scripts/reproduce_full.py P5",
       "sha256": null,
       "tracked": false
+    },
+    {
+      "path": "source_phased_array_gru_pretrain.pt",
+      "size": 174545,
+      "sha256": "7828894a1495f989f6daebea3815d218a445c1281b964add97553fe4e9356fdb",
+      "role": "source_domain_pretrain_gru_dual_head",
+      "random_seeds": null,
+      "command": "python -m src.train.pretrain --config configs/phased_array.yaml --canonical",
+      "config": "configs/phased_array.yaml",
+      "contract_version": "component-contract-v1.1.0",
+      "git_commit": "legacy-snapshot-2026-08",
+      "source_mode": "derived_from_public_dataset",
+      "redistributable": false,
+      "source_url": null,
+      "reproduce_status": "pending_legacy_verification",
+      "rc_payload": false
     }
   ]
 }
