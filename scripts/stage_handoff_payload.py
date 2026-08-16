@@ -37,6 +37,9 @@ def stage(repo_root: Path, slots: dict) -> list:
             if not entry.get("rc_payload"):
                 continue
             rel = entry["path"]
+            rel_path = Path(rel)
+            if rel_path.is_absolute() or ".." in rel_path.parts:
+                raise ValueError(f"manifest 条目路径必须是仓库内相对路径（禁绝对路径与 ..）: {rel!r}")
             src = repo_root / SLOT_ROOTS[slot] / rel
             if not src.is_file() or src.is_symlink():
                 raise ValueError(f"白名单文件缺失或为符号链接: {src}")

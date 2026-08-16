@@ -60,3 +60,18 @@ def test_stage_fails_on_sha256_mismatch(tmp_path):
         assert "m.pt" in str(exc)
     else:
         raise AssertionError("SHA256 不符必须抛 ValueError")
+
+
+def test_stage_rejects_path_escape_and_absolute(tmp_path):
+    module = _load_module()
+    for bad in ("../outside.h5", "C:/x.h5"):
+        try:
+            module.stage(
+                tmp_path,
+                slots={"data": [{"path": bad, "sha256": "0" * 64, "rc_payload": True}]},
+            )
+        except ValueError as exc:
+            assert "仓库内相对路径" in str(exc), f"{bad}: 缺少 containment 守卫消息: {exc}"
+            assert bad in str(exc)
+        else:
+            raise AssertionError(f"越权路径必须抛 ValueError: {bad}")
