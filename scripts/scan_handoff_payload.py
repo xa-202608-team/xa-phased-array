@@ -10,7 +10,7 @@ import re
 from pathlib import Path
 
 NASA_RAW_PATTERN = re.compile(r"(nasa|mosfet_raw|raw_.+\.(mat|txt)|original)", re.IGNORECASE)
-ABSOLUTE_PATH_PATTERN = re.compile(r"([A-Za-z]:\\\\|/home/|/Users/)")
+ABSOLUTE_PATH_PATTERN = re.compile(r"([A-Za-z]:[/\\]{1,2}|/home/|/Users/)")
 SECRET_PATTERN = re.compile(r"(api[_-]?key|token|password|BEGIN (RSA|OPENSSH) PRIVATE KEY)", re.IGNORECASE)
 TEXT_SUFFIXES = {".json", ".jsonl", ".md", ".txt", ".yaml", ".yml", ".csv", ".log", ".py"}
 
