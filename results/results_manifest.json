@@ -21,7 +21,7 @@
       "redistributable": true,
       "source_url": null,
       "reproduce_status": "pending_legacy_verification",
-      "rc_payload": false
+      "rc_payload": true
     },
     {
       "path": "reference/arch_aligned_raw.jsonl",
@@ -39,7 +39,7 @@
       "redistributable": true,
       "source_url": null,
       "reproduce_status": "pending_legacy_verification",
-      "rc_payload": false
+      "rc_payload": true
     },
     {
       "path": "reference/kshot_frozen.jsonl",
@@ -57,7 +57,7 @@
       "redistributable": true,
       "source_url": null,
       "reproduce_status": "pending_legacy_verification",
-      "rc_payload": false
+      "rc_payload": true
     },
     {
       "path": "reference/metrics_phased_array.json",
@@ -75,7 +75,7 @@
       "redistributable": true,
       "source_url": null,
       "reproduce_status": "pending_legacy_verification",
-      "rc_payload": false
+      "rc_payload": true
     },
     {
       "path": "reference/runs/run_groups_gpu.log",
@@ -93,7 +93,7 @@
       "redistributable": true,
       "source_url": null,
       "reproduce_status": "pending_legacy_verification",
-      "rc_payload": false
+      "rc_payload": true
     }
   ]
 }

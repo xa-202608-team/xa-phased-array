@@ -93,10 +93,10 @@
       "contract_version": "component-contract-v1.1.0",
       "git_commit": "legacy-snapshot-2026-08",
       "source_mode": "synthetic",
-      "redistributable": false,
+      "redistributable": true,
       "source_url": null,
       "reproduce_status": "pending_legacy_verification",
-      "rc_payload": false
+      "rc_payload": true
     },
     {
       "path": "features/phased_array/schema_v1/target/target_features.h5",
@@ -111,10 +111,10 @@
       "contract_version": "component-contract-v1.1.0",
       "git_commit": "legacy-snapshot-2026-08",
       "source_mode": "synthetic",
-      "redistributable": false,
+      "redistributable": true,
       "source_url": null,
       "reproduce_status": "pending_legacy_verification",
-      "rc_payload": false
+      "rc_payload": true
     },
     {
       "path": "simulated/phased_array/sim_v1/seed_42/params.json",
@@ -132,7 +132,7 @@
       "redistributable": true,
       "source_url": null,
       "reproduce_status": "pending_legacy_verification",
-      "rc_payload": false
+      "rc_payload": true
     },
     {
       "path": "simulated/phased_array/sim_v1/seed_42/phased_array_all.h5",
@@ -150,7 +150,7 @@
       "redistributable": true,
       "source_url": null,
       "reproduce_status": "pending_legacy_verification",
-      "rc_payload": false
+      "rc_payload": true
     },
     {
       "path": "simulated/phased_array/sim_v1/seed_42/traj_000.csv",
@@ -168,7 +168,7 @@
       "redistributable": true,
       "source_url": null,
       "reproduce_status": "pending_legacy_verification",
-      "rc_payload": false
+      "rc_payload": true
     },
     {
       "path": "simulated/phased_array/sim_v1/seed_42/traj_001.csv",
@@ -186,7 +186,7 @@
       "redistributable": true,
       "source_url": null,
       "reproduce_status": "pending_legacy_verification",
-      "rc_payload": false
+      "rc_payload": true
     },
     {
       "path": "simulated/phased_array/sim_v1/seed_42/traj_002.csv",
@@ -204,7 +204,7 @@
       "redistributable": true,
       "source_url": null,
       "reproduce_status": "pending_legacy_verification",
-      "rc_payload": false
+      "rc_payload": true
     },
     {
       "path": "simulated/phased_array/sim_v1/seed_42/traj_003.csv",
@@ -222,7 +222,7 @@
       "redistributable": true,
       "source_url": null,
       "reproduce_status": "pending_legacy_verification",
-      "rc_payload": false
+      "rc_payload": true
     },
     {
       "path": "simulated/phased_array/sim_v2/seed_42/params.json",
@@ -240,7 +240,7 @@
       "redistributable": true,
       "source_url": null,
       "reproduce_status": "pending_legacy_verification",
-      "rc_payload": false
+      "rc_payload": true
     },
     {
       "path": "simulated/phased_array/sim_v2/seed_42/phased_array_all.h5",
@@ -258,7 +258,7 @@
       "redistributable": true,
       "source_url": null,
       "reproduce_status": "pending_legacy_verification",
-      "rc_payload": false
+      "rc_payload": true
     },
     {
       "path": "simulated/phased_array/sim_v2/seed_42/traj_000.csv",
@@ -276,7 +276,7 @@
       "redistributable": true,
       "source_url": null,
       "reproduce_status": "pending_legacy_verification",
-      "rc_payload": false
+      "rc_payload": true
     },
     {
       "path": "simulated/phased_array/sim_v2/seed_42/traj_001.csv",
@@ -294,7 +294,7 @@
       "redistributable": true,
       "source_url": null,
       "reproduce_status": "pending_legacy_verification",
-      "rc_payload": false
+      "rc_payload": true
     },
     {
       "path": "simulated/phased_array/sim_v2/seed_42/traj_002.csv",
@@ -312,7 +312,7 @@
       "redistributable": true,
       "source_url": null,
       "reproduce_status": "pending_legacy_verification",
-      "rc_payload": false
+      "rc_payload": true
     },
     {
       "path": "simulated/phased_array/sim_v2/seed_42/traj_003.csv",
@@ -330,7 +330,7 @@
       "redistributable": true,
       "source_url": null,
       "reproduce_status": "pending_legacy_verification",
-      "rc_payload": false
+      "rc_payload": true
     }
   ]
 }
