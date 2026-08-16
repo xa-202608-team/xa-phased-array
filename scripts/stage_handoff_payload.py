@@ -62,6 +62,7 @@ def _load_manifest_slots(repo_root: Path) -> dict:
     manifests = {
         "data": repo_root / "data" / "data_manifest.json",
         "checkpoints": repo_root / "checkpoints" / "checkpoint_manifest.json",
+        "results": repo_root / "results" / "results_manifest.json",
     }
     for slot, manifest_path in manifests.items():
         if manifest_path.is_file():
