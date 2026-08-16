@@ -34,6 +34,9 @@ def stage(repo_root: Path, slots: dict) -> list:
     for slot, entries in slots.items():
         if slot not in SLOT_ROOTS:
             raise ValueError(f"未知槽位: {slot!r}")
+        # 无条件建槽位占位目录：--clean 后某槽位无批准文件时目录也要可重建，
+        # 否则 build_rc_artifact 会对缺失槽位拒绝生成。
+        (staging / slot).mkdir(parents=True, exist_ok=True)
         for entry in entries:
             if not entry.get("rc_payload"):
                 continue

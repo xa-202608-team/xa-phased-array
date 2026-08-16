@@ -105,6 +105,30 @@ def test_stage_results_slot_via_manifest(tmp_path):
     ).exists(), "rc_payload=false 的 results 条目不得进入 staging"
 
 
+def test_stage_creates_empty_slot_dirs(tmp_path):
+    """全部条目 rc_payload=false 时仍须对每个槽位键建占位目录。
+
+    --clean 删除 staging 后某槽位无批准文件时，目录不重建会让
+    build_rc_artifact 对缺失槽位拒绝生成；stage() 必须无条件建槽位目录。
+    """
+    module = _load_module()
+    staged = module.stage(
+        tmp_path,
+        slots={
+            "data": [{"path": "a.h5", "sha256": "0" * 64, "rc_payload": False}],
+            "checkpoints": [],
+            "results": [
+                {"path": "reference/x.json", "sha256": "0" * 64, "rc_payload": False}
+            ],
+        },
+    )
+    assert staged == [], "无批准条目时返回清单必须为空"
+    for slot in ("data", "checkpoints", "results"):
+        assert (tmp_path / "handoff" / "payload" / slot).is_dir(), (
+            f"槽位 {slot} 的占位目录必须被无条件创建"
+        )
+
+
 def test_stage_rejects_path_escape_and_absolute(tmp_path):
     module = _load_module()
     for bad in ("../outside.h5", "C:/x.h5"):
