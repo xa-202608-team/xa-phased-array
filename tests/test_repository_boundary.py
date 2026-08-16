@@ -74,3 +74,28 @@ def test_no_tracked_pycache_or_pytest_cache() -> None:
         or p.endswith(".pyc")
     ]
     assert offenders == [], f"缓存产物被跟踪: {offenders}"
+
+
+def test_handoff_payload_staging_ignored() -> None:
+    """handoff/payload/ 白名单 staging 必须被忽略且永不受跟踪（设计 §5.3/§10）。"""
+    root = Path(__file__).resolve().parents[1]
+    _skip_outside_git_repo(root)
+    probe = root / "handoff" / "payload" / ".keep"
+    probe.parent.mkdir(parents=True, exist_ok=True)
+    probe.touch()
+    try:
+        out = subprocess.run(
+            ["git", "check-ignore", "handoff/payload/.keep"],
+            cwd=root, capture_output=True,
+        )
+        assert out.returncode == 0, "handoff/payload/ 未被 .gitignore 忽略"
+        offenders = [
+            p for p in _tracked_files(root) if p.startswith("handoff/payload/")
+        ]
+        assert offenders == [], f"staging 内容被跟踪: {offenders}"
+    finally:
+        probe.unlink(missing_ok=True)
+        try:
+            probe.parent.rmdir()
+        except OSError:
+            pass
