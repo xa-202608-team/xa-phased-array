@@ -2,7 +2,7 @@
 """仓库边界守护测试：本地工件槽位不得被跟踪。
 
 约束（与导入策略、公开泄漏扫描器语义一致）：
-- 根级 ``data/``、``results/``、``checkpoints/`` 是本地工件槽位，除七个批准
+- 根级 ``data/``、``results/``、``checkpoints/`` 是本地工件槽位，除八个批准
   描述文件外不得出现任何受跟踪文件；
 - 所有 ``.pt/.h5/.hdf5/.log`` 文件一律不受跟踪（无论目录）；
 - 测试基于 ``git ls-files -z``（与扫描器同源），因此只做静态索引断言，
@@ -20,6 +20,7 @@ APPROVED_SLOT_FILES = {
     "results/README.md",
     "results/public_summary.json",
     "results/expected_metrics.json",
+    "results/results_manifest.json",
     "checkpoints/README.md",
     "checkpoints/checkpoint_manifest.json",
 }

@@ -7,6 +7,7 @@ staging 是可删除、可重建的派生视图，绝不允许反向复制回槽
 import argparse
 import hashlib
 import json
+import re
 import shutil
 from pathlib import Path
 
@@ -33,12 +34,21 @@ def stage(repo_root: Path, slots: dict) -> list:
     for slot, entries in slots.items():
         if slot not in SLOT_ROOTS:
             raise ValueError(f"未知槽位: {slot!r}")
+        # 无条件建槽位占位目录：--clean 后某槽位无批准文件时目录也要可重建，
+        # 否则 build_rc_artifact 会对缺失槽位拒绝生成。
+        (staging / slot).mkdir(parents=True, exist_ok=True)
         for entry in entries:
             if not entry.get("rc_payload"):
                 continue
             rel = entry["path"]
             rel_path = Path(rel)
-            if rel_path.is_absolute() or ".." in rel_path.parts:
+            # 盘符正则必须与 is_absolute() 并列：POSIX 上 Path("C:/x.h5").is_absolute()
+            # 为 False，仅靠 is_absolute() 会在 Linux 容器（Docker 全量 pytest）漏拒。
+            if (
+                rel_path.is_absolute()
+                or re.match(r"^[A-Za-z]:", rel)
+                or ".." in rel_path.parts
+            ):
                 raise ValueError(f"manifest 条目路径必须是仓库内相对路径（禁绝对路径与 ..）: {rel!r}")
             src = repo_root / SLOT_ROOTS[slot] / rel
             if not src.is_file() or src.is_symlink():
@@ -62,6 +72,7 @@ def _load_manifest_slots(repo_root: Path) -> dict:
     manifests = {
         "data": repo_root / "data" / "data_manifest.json",
         "checkpoints": repo_root / "checkpoints" / "checkpoint_manifest.json",
+        "results": repo_root / "results" / "results_manifest.json",
     }
     for slot, manifest_path in manifests.items():
         if manifest_path.is_file():

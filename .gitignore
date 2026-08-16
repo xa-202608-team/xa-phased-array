@@ -31,6 +31,7 @@ wandb/
 !/results/README.md
 !/results/public_summary.json
 !/results/expected_metrics.json
+!/results/results_manifest.json
 /checkpoints/**
 !/checkpoints/README.md
 !/checkpoints/checkpoint_manifest.json
