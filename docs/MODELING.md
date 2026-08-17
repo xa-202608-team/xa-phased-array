@@ -104,6 +104,12 @@ split）；源域按器件 leave-one-device-out。评估 RMSE/PHM/MAE 仅统计�
 >    跨组比较无法归因源迁移（target_gru − source_mmd 混合了架构差异）。
 > 4. 修复见 commit（fix/migration-experiment-clear）：L_phys 无真值即禁用、迁移归因组统一
 >    显式 GRU、canonical T_dev_C 统一 °C（旧 Kelvin）。重跑前本节冻结数字仅供历史追溯。
+>
+> **重跑完成（2026-08-17，200 traj × 5 seeds，统一 GRU）**：预注册判停条款触发——
+> 源 ckpt 主归因 (source_mmd − random_full) = +0.0170，CI95 [−0.0231, +0.0571] 跨 0；
+> init/mmd control 均跨 0；target_gru − source_mmd = −0.0052 跨 0（旧"显著负迁移"为
+> 污染+伪重复+混架构复合假象）。最终口径：**未观察到正迁移，源权重贡献不可区分于
+> 随机初始化**（正迁移探索封口）。详见主仓 docs/开发推进计划/transfer_clear_review_and_positive_gain_plan.md §3.4。
 
 **结论分类（契约 §7）：无正迁移被证伪为负迁移——源 ckpt 显著负迁移 +
 MMD 无贡献，MOSFET→阵列服务寿命权重迁移路线被否证。**
