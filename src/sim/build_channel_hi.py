@@ -126,6 +126,8 @@ def main():
     with h5py.File(h5_in, "r") as fin, h5py.File(out, "w") as fout:
         fout.attrs["dynamics_id"] = str(fin.attrs.get("dynamics_id", ""))
         fout.attrs["canonical_schema"] = CANONICAL_SCHEMA
+        fout.attrs["t_dev_unit"] = "degC"      # canonical 第1维 T_dev_C 单位 = sim Tj (Kelvin) − 273.15
+        fout.attrs["t_dev_conversion"] = "subarray_features.Tj_K_minus_273.15"
         fout.attrs["channel_label_schema"] = CHANNEL_LABEL_SCHEMA
         fout.attrs["delta_thresholds"] = ",".join(f"{k}={v}" for k, v in deltas.items())
         for key in sorted(fin.keys()):

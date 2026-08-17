@@ -22,7 +22,7 @@
       "name": "transfer_gain_delta_rmse",
       "value": -0.0326,
       "unit": "配对 ΔRMSE（target_gru − source_mmd），负值=迁移更差",
-      "source": "docs/MODELING.md §6（95% CI [−0.054, −0.011] 全负，5/5 seed 差 → 显著负迁移）"
+      "source": "勘误 2026-08-17: 该 CI 为 50traj 旧口径, 已撤回; 200traj 5-seed 配对 CI [−0.0104,+0.0071] 跨 0 → 未观察到正迁移 (见 docs/MODELING.md §6 勘误)"
     },
     {
       "name": "init_control_delta_rmse",
@@ -44,7 +44,7 @@
     },
     {
       "name": "baseline_arrhenius_rmse_5seed",
-      "value": 0.5290,
+      "value": 0.529,
       "unit": "normalized RUL RMSE",
       "source": "docs/MODELING.md §6（物理外推基线，五划分口径）"
     },
@@ -63,5 +63,6 @@
     "正式冻结数字来自项目主仓 progress.md 记录的 P0 修复后 5-seed 全量重跑，本仓镜像叙述见 docs/MODELING.md §6；本仓重建同等数字需真实 NASA 源域（docs/DATA_DICTIONARY.md §7）+ reproduce_full（约小时级 CPU）。",
     "reproduce_judge/full 在无真实源域时自动落 source_mode=synthetic，其指标仅证明管线连通，不得引用为正式结果。",
     "单指标入口 component.predict（causal_single_telemetry）为因果趋势基线，不与 PyTorch 主模型指标口径混同（docs/MODELING.md §5）。"
-  ]
+  ],
+  "_reattribution_errata_2026_08_17": "迁移结论清零重审: L_phys 全零占位污染(通道级) + 混架构归因 + 温度单位(K vs °C) 已修复 (fix/migration-experiment-clear); 旧冻结数字作废, 统一 GRU 协议重跑后刷新"
 }

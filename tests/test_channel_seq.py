@@ -190,16 +190,20 @@ def test_end_to_end_split_and_kshot():
     tr, va, te = split_trajectories(
         n_traj, [tc["split"]["train"], tc["split"]["val"], tc["split"]["test"]], 42)
     assert_split_by_trajectory(tid, tr, va, te, sid)
-    # k=2
-    k_ids = sample_kshot_trajectories(tr, 2, seed=42)
+    # k-shot 采样: k 必须 < len(tr) (k >= len(tr) 时短路为 all=None; smoke 4 轨迹 tr=1 跳过)
+    if len(tr) < 2:
+        pytest.skip(f"train 轨迹数 {len(tr)} < 2, 无法测 k-shot mask (重仿真 200 轨迹后自动恢复)")
+    k = 2 if len(tr) > 2 else 1
+    k_ids = sample_kshot_trajectories(tr, k, seed=42)
+    assert k_ids is not None, f"k={k} 应可从 {len(tr)} 条 train 轨迹采样"
     r2, e2, l2 = apply_kshot_mask(rul, ev, lb, tid, tr, k_ids)
     # train 内 mask 检查
     train_mask = np.isin(tid, list(tr))
     labeled = np.isin(tid, list(k_ids))
     unlabeled_train = train_mask & ~labeled
-    if unlabeled_train.any():
-        assert (e2[unlabeled_train] == False).all(), "mask 后 train 非 k_ids 通道 event 应全 False"
-        assert (r2[unlabeled_train] == 0.0).all(), "mask 后 train 非 k_ids 通道 rul 应全 0"
+    assert unlabeled_train.any(), f"应存在未标注 train 通道 (k={k} < len(tr)={len(tr)})"
+    assert (e2[unlabeled_train] == False).all(), "mask 后 train 非 k_ids 通道 event 应全 False"
+    assert (r2[unlabeled_train] == 0.0).all(), "mask 后 train 非 k_ids 通道 rul 应全 0"
     # val/test 不变
     va_mask = np.isin(tid, list(va))
     assert (e2[va_mask] == ev[va_mask]).all(), "val event 不应变"

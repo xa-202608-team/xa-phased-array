@@ -40,11 +40,11 @@ config 的 CPU 仿真跨平台逐位一致。
 | `RDS_drift` | 无量纲（×初始） | **是**（遥测口径） | 是 | 轨迹均值 R_DS(on) 漂移 |
 | `IDSS_ratio` | 无量纲 | **是**（遥测口径） | 是 | 轨迹均值 I_DSS 比例 |
 | `gm_ratio` | 无量纲 | **是**（遥测口径） | 是 | 轨迹均值跨导比例 |
-| `Tj` / `Tj_max` / `Tj_min` | °C | **是** | 否 | 6h 窗结温均值/最大/最小（修复: 仿真器输出 Kelvin 已转为 °C） |
+| `Tj` / `Tj_max` / `Tj_min` | K | **是** | 否 | 6h 窗结温均值/最大/最小（sim 原生输出 Kelvin；canonical T_dev_C 在 build_channel_hi 转 °C） |
 | `duty` | 无量纲（0.3–0.8） | **是** | 否 | PA 占空比 |
 | `damage` | 无量纲 | 否（latent） | 是 | 轨迹级标量损伤真值（eff_age/life_scale） |
 | `label_fail` | 0/1 | 否（标签） | 是 | 服务失效标记（多维越限+持续判据） |
-| `subarray_features` | (T,16,8) | **是** | 是 | 子阵遥测：`[mean_pow, q10_pow, IDSS, Tj, amp_rms, phase_rms, eff_ratio, q90_f]`（修复: Tj 列已转为 °C） |
+| `subarray_features` | (T,16,8) | **是** | 是 | 子阵遥测：`[mean_pow, q10_pow, IDSS, Tj, amp_rms, phase_rms, eff_ratio, q90_f]`（Tj 列 = Kelvin，sim 原生；canonical T_dev_C 转换见 build_channel_hi） |
 | `latent_sub_damage` | (T,16) 无量纲 | 否（latent 真值） | 是 | 子阵损伤真值（sim_v2 专属，通道级标签源） |
 | `twin_*` | — | 否（twin_only） | 是 | 物理孪生静态量（c_elem/eta_R/eta_phi/dropout_thr/grad_dir/subarray_ids），不进模型输入 |
 
@@ -56,7 +56,7 @@ config 的 CPU 仿真跨平台逐位一致。
 | 字段 | 单位 | 说明 |
 |------|------|------|
 | `p_drift_norm` | 无量纲 | 归一化到器件失效阈值的关键参量漂移：源域 `ΔR_DS/0.05`（NASA Celaya 判据）；与目标域 `max(ΔIDSS/δI, ΔP/δP)` 同语义——迁移接口核心 |
-| `T_dev_C` | °C | 器件温度（源域壳温 / 目标域子阵 Tj） |
+| `T_dev_C` | °C | 器件温度（源域壳温 T_case_C / 目标域子阵 Tj_K − 273.15） |
 | `duty` | 无量纲 | 占空比工况 |
 | `drive_norm` | 无量纲 | 归一化驱动强度协变量（源域 supply_V×gate_voltage / 初值） |
 

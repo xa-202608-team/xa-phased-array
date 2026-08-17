@@ -54,25 +54,27 @@ CKPT_DIR = ROOT / "checkpoints"
 TIMESFM_GROUPS = {"timesfm_zeroshot", "timesfm_xreg", "timesfm_lora_xreg",
                   "main_timesfm_fusion"}
 
-# config 组名 → (内部 mode, encoder_override)。修复: 强制所有组使用 GRU，统一架构进行对比
+# config 组名 → (内部 mode, encoder_override)。None encoder = 用 config 默认 (tcn)
+# 架构纪律 (迁移结论清零重审): 迁移归因组统一显式 GRU, 与主模型 target_only_gru 同架构,
+# 消除 "GRU target-only vs TCN transfer" 混架构归因; *_tcn 组名回归真 TCN 作架构消融 (名实一致, 不进迁移归因)
 _GROUP_MAP = {
     # 相控阵 (config §8)
-    "target_only_tcn":            ("target_only", "gru"),   # 修复: 强制 GRU
-    "target_only_gru":            ("target_only", "gru"),
-    "source_pretrain_finetune":   ("source_finetune", "gru"),  # 修复: 强制 GRU
-    "source_mmd_physics":         ("source_mmd_finetune", "gru"),  # 修复: 强制 GRU
-    "random_frozen":              ("random_frozen", "gru"),   # 修复: 强制 GRU
-    "random_full_finetune":       ("random_full_mmd", "gru"),  # 修复: 强制 GRU
-    "random_nommd":               ("random_full_nommd", "gru"),  # 修复: 强制 GRU
+    "target_only_tcn":            ("target_only", "tcn"),    # 架构消融 (真 TCN)
+    "target_only_gru":            ("target_only", "gru"),    # 主基线
+    "source_pretrain_finetune":   ("source_finetune", "gru"),
+    "source_mmd_physics":         ("source_mmd_finetune", "gru"),
+    "random_frozen":              ("random_frozen", "gru"),
+    "random_full_finetune":       ("random_full_mmd", "gru"),
+    "random_nommd":               ("random_full_nommd", "gru"),
     # 通道级 ch_* 组 (T6.3/M7, level=channel 路径专用; 内部 mode 与旧组同, level 决定走哪个 run_one_group)
-    "ch_target_only_tcn":         ("target_only", "gru"),   # 修复: 强制 GRU
+    "ch_target_only_tcn":         ("target_only", "tcn"),    # 架构消融 (真 TCN)
     "ch_target_only_gru":         ("target_only", "gru"),
-    "ch_source_pretrain_frozen":  ("source_finetune", None),
-    "ch_source_mmd_physics":      ("source_mmd_finetune", None),
-    "ch_random_frozen":           ("random_frozen", None),
-    "ch_random_full_finetune":    ("random_full_mmd", None),
-    "ch_random_nommd":            ("random_full_nommd", None),
-    "cross_level_transfer":       ("cross_level", None),     # T6.3 层级消融 (旧服务级口径, level=service)
+    "ch_source_pretrain_frozen":  ("source_finetune", "gru"),
+    "ch_source_mmd_physics":      ("source_mmd_finetune", "gru"),
+    "ch_random_frozen":           ("random_frozen", "gru"),
+    "ch_random_full_finetune":    ("random_full_mmd", "gru"),
+    "ch_random_nommd":            ("random_full_nommd", "gru"),
+    "cross_level_transfer":       ("cross_level", "gru"),    # T6.3 层级消融 (level=service; 同 GRU 架构, level_control 纯归因层级)
     # 飞轮旧名 (兼容)
     "target_only":                ("target_only", None),
     "source_only":                ("source_only", None),
@@ -282,8 +284,11 @@ def run_one_group(mode, seed, cfg, smoke=False, encoder_override=None,
         # k-shot mask (T6.2): train 内采 k 条保留标签, 其余 mask (MMD 无监督对齐)
         k_ids = sample_kshot_trajectories(tr, k_shot, seed=seed)
         rulT, evT, lbT = apply_kshot_mask(rulT, evT, lbT, tidT, tr, k_ids)
-        # 修复: 通道级无 damage_norm 时禁用 L_phys, 避免全零污染
-        damageT = None  # 通道级无 damage_norm (build_channel_hi 未存); L_phys 条件禁用
+        # 通道级无 damage_norm 真值 (build_channel_hi 未存): damageT=None → S3 阶段 ρ·L_phys 条件禁用
+        # (旧版全零占位 + rho_phys>0 会把 HI 预测持续拉向 0, 属实验污染, 已根除)
+        damageT = None
+        if rho_phys_loss > 0:
+            print("  [L_phys] channel level 无 damage 真值: S3 阶段 ρ·L_phys 已禁用 (use_phys=False)")
         n_label_traj = len(k_ids) if k_ids is not None else len(tr)
         if k_shot is not None and k_shot != "all":
             print(f"  [k-shot] k={k_shot}: {n_label_traj}/{len(tr)} train 轨迹带标签")
@@ -345,7 +350,7 @@ def run_one_group(mode, seed, cfg, smoke=False, encoder_override=None,
         m = mask(ids)
         ds = TargetSeqDataset(xT[m], hiT[m], rulT[m], group_keys_T[m], L, K, stride=tstride,
                               event_observed=evT[m], rul_lower_bound=lbT[m],
-                              damage_b=damageT[m])   # T13: damage_norm 供 ρ·L_phys (channel level 占位 0)
+                              damage_b=damageT[m] if damageT is not None else None)  # T13: damage_norm 供 ρ·L_phys; channel level None → dataset 占位 0 且 S3 use_phys=False
         if smoke:
             ds = Subset(ds, list(range(min(32, len(ds)))))
         return ds
@@ -409,7 +414,8 @@ def run_one_group(mode, seed, cfg, smoke=False, encoder_override=None,
         model.freeze_encoder(False)
         opt = torch.optim.Adam(model.parameters(), lr=float(tc["finetune_lr"]))
         _train_with_early_stop(model, ltr, lva, opt, device, huber, mse, lam, e, f"{tag} S3",
-                               use_phys=(rho_phys_loss > 0), rho_phys=rho_phys_loss)   # 无 MMD, 有 L_phys
+                               use_phys=(rho_phys_loss > 0 and damageT is not None),
+                               rho_phys=rho_phys_loss)   # 无 MMD; L_phys 仅在有 damage 真值时启用
     else:  # source_mmd_finetune (源 ckpt+S3) 或 random_full_mmd (随机+S3, GPT §3)
         model.freeze_encoder(True)
         opt = torch.optim.Adam([p for p in model.parameters() if p.requires_grad], lr=float(tc["finetune_lr"]))
@@ -418,7 +424,8 @@ def run_one_group(mode, seed, cfg, smoke=False, encoder_override=None,
         opt = torch.optim.Adam(model.parameters(), lr=float(tc["finetune_lr"]))
         _train_with_early_stop(model, ltr, lva, opt, device, huber, mse, lam, e, f"{tag} S3",
                                use_mmd=True, src_iter=cycle(lS), bins=bins, mmd_lambda=mmd_lambda,
-                               use_phys=(rho_phys_loss > 0), rho_phys=rho_phys_loss)   # T13: ρ·L_phys 物理一致性
+                               use_phys=(rho_phys_loss > 0 and damageT is not None),
+                               rho_phys=rho_phys_loss)   # T13: ρ·L_phys (channel level 无真值时禁用)
 
     m = eval_test(model, lte, device)
     m["mode"] = mode

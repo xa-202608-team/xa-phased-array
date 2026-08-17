@@ -91,6 +91,20 @@ split）；源域按器件 leave-one-device-out。评估 RMSE/PHM/MAE 仅统计�
 
 ## 6. 跨域迁移结论（冻结）：NO_POSITIVE_TRANSFER_SUPPORTED
 
+> **⚠ 勘误（2026-08-17 迁移结论清零重审）**：本节数字为 50 轨迹时代的旧冻结口径，
+> 与最新 200 轨迹矩阵及三项协议缺陷冲突，**"显著负迁移"结论撤回**，待统一协议重跑后再定论：
+>
+> 1. **最新 200traj 服务级（5 seeds）**：迁移增益 (target_gru − source_mmd) = −0.0017，
+>    CI95 [−0.0104, +0.0071] **跨 0**；init_control / full_control / mmd_control 全部跨 0
+>    （05_结果/reference/phased_array/01_PA6_服务级主矩阵/all_metrics_phased_array_200traj.json）。
+>    正确表述：**未观察到正迁移，源权重无可测增益**（非"显著负迁移"）。
+> 2. **通道级旧结论作废**：① ch_* 迁移组的 ρ·L_phys 使用全零 damage 占位（实验污染）；
+>    ② "CI 全负"基于 50 轨迹伪重复 CI，seed 级配对 t-CI 实为 [−0.0864, +0.0250] 跨 0（n=3）。
+> 3. **混架构归因失效**：source_mmd 历代跑 TCN、主模型 target_only_gru 跑 GRU，
+>    跨组比较无法归因源迁移（target_gru − source_mmd 混合了架构差异）。
+> 4. 修复见 commit（fix/migration-experiment-clear）：L_phys 无真值即禁用、迁移归因组统一
+>    显式 GRU、canonical T_dev_C 统一 °C（旧 Kelvin）。重跑前本节冻结数字仅供历史追溯。
+
 **结论分类（契约 §7）：无正迁移被证伪为负迁移——源 ckpt 显著负迁移 +
 MMD 无贡献，MOSFET→阵列服务寿命权重迁移路线被否证。**
 
