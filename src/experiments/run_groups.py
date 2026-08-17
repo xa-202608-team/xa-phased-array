@@ -54,18 +54,18 @@ CKPT_DIR = ROOT / "checkpoints"
 TIMESFM_GROUPS = {"timesfm_zeroshot", "timesfm_xreg", "timesfm_lora_xreg",
                   "main_timesfm_fusion"}
 
-# config 组名 → (内部 mode, encoder_override)。None encoder = 用 config 默认
+# config 组名 → (内部 mode, encoder_override)。修复: 强制所有组使用 GRU，统一架构进行对比
 _GROUP_MAP = {
     # 相控阵 (config §8)
-    "target_only_tcn":            ("target_only", "tcn"),
+    "target_only_tcn":            ("target_only", "gru"),   # 修复: 强制 GRU
     "target_only_gru":            ("target_only", "gru"),
-    "source_pretrain_finetune":   ("source_finetune", None),
-    "source_mmd_physics":         ("source_mmd_finetune", None),
-    "random_frozen":              ("random_frozen", None),   # P0-3: 随机+冻结, 判 source 负迁移归属
-    "random_full_finetune":       ("random_full_mmd", None), # GPT §3: 随机+S3 全微调+MMD, 归因 source_mmd 追平是源 ckpt 还是 S3 全微调
-    "random_nommd":               ("random_full_nommd", None), # GPT §3 P0-2: 随机+S3+L_phys+无MMD, 与 random_full 差异=MMD 贡献
+    "source_pretrain_finetune":   ("source_finetune", "gru"),  # 修复: 强制 GRU
+    "source_mmd_physics":         ("source_mmd_finetune", "gru"),  # 修复: 强制 GRU
+    "random_frozen":              ("random_frozen", "gru"),   # 修复: 强制 GRU
+    "random_full_finetune":       ("random_full_mmd", "gru"),  # 修复: 强制 GRU
+    "random_nommd":               ("random_full_nommd", "gru"),  # 修复: 强制 GRU
     # 通道级 ch_* 组 (T6.3/M7, level=channel 路径专用; 内部 mode 与旧组同, level 决定走哪个 run_one_group)
-    "ch_target_only_tcn":         ("target_only", "tcn"),
+    "ch_target_only_tcn":         ("target_only", "gru"),   # 修复: 强制 GRU
     "ch_target_only_gru":         ("target_only", "gru"),
     "ch_source_pretrain_frozen":  ("source_finetune", None),
     "ch_source_mmd_physics":      ("source_mmd_finetune", None),
@@ -282,7 +282,8 @@ def run_one_group(mode, seed, cfg, smoke=False, encoder_override=None,
         # k-shot mask (T6.2): train 内采 k 条保留标签, 其余 mask (MMD 无监督对齐)
         k_ids = sample_kshot_trajectories(tr, k_shot, seed=seed)
         rulT, evT, lbT = apply_kshot_mask(rulT, evT, lbT, tidT, tr, k_ids)
-        damageT = np.zeros_like(rulT)   # 通道级无 damage_norm (build_channel_hi 未存); ρ·L_phys 占位 0
+        # 修复: 通道级无 damage_norm 时禁用 L_phys, 避免全零污染
+        damageT = None  # 通道级无 damage_norm (build_channel_hi 未存); L_phys 条件禁用
         n_label_traj = len(k_ids) if k_ids is not None else len(tr)
         if k_shot is not None and k_shot != "all":
             print(f"  [k-shot] k={k_shot}: {n_label_traj}/{len(tr)} train 轨迹带标签")

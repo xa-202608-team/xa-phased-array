@@ -87,7 +87,7 @@ def build_canonical_x(sa_feat_s: np.ndarray, duty: float, deltas: dict):
     dIDSS = np.clip(1.0 - IDSS / IDSS0, 0.0, None)
     dP = np.clip(1.0 - P / P0, 0.0, None)
     p_drift = np.maximum(dIDSS / deltas["I_DSS"], dP / deltas["P_out"])
-    T_dev = sa_feat_s[:, SA_COL_TJ]
+    T_dev = sa_feat_s[:, SA_COL_TJ] - 273.15  # 修复: 仿真器输出 Kelvin 转为 °C，与命名 T_dev_C 一致
     amp = sa_feat_s[:, SA_COL_AMP]
     amp0 = amp[0] if abs(amp[0]) > 1e-9 else 1.0
     drive = amp / amp0
