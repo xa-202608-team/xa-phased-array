@@ -234,7 +234,10 @@ def run(args):
               cfg["reproducibility"]["cudnn_benchmark"])
 
     pre_cfg = cfg.get("pretrain", {})
-    if getattr(args, "canonical", False):
+    if getattr(args, "canonical_source", None):
+        # §4c 源域臂: CLI 覆盖 canonical 源 (igbt / mosfet_igbt 多源)
+        feat_path = args.canonical_source
+    elif getattr(args, "canonical", False):
         feat_path = pre_cfg.get("canonical_source_path",
                                 "data/features/phased_array/schema_v4/source/mosfet_canonical.h5")
     else:
@@ -245,7 +248,9 @@ def run(args):
         print(f"!! 缺 {feat_h5}; 先运行对应组件的源域特征工程 "
               f"(wheel_features.py / mosfet_features.py --synthetic)")
         sys.exit(1)
-    val_device_ids = cfg.get("source", {}).get("split", {}).get("val_device_ids", []) or []
+    val_device_ids = ([v.strip() for v in args.val_device_ids.split(",") if v.strip()]
+                     if getattr(args, "val_device_ids", None)
+                     else cfg.get("source", {}).get("split", {}).get("val_device_ids", []) or [])
     sd = load_source_features(feat_h5, id_field=id_field, val_device_ids=val_device_ids)
     features = sd.features
     hi = sd.hi
@@ -331,6 +336,12 @@ def run(args):
     # 追踪最佳 val RUL RMSE 时点 (val_rul_rmse, vm, state_dict, epoch)。
     # 修复: 原 best=vm 每轮无条件覆盖 → torch.save 实际存最后一轮 (末段可能发散,
     # 诊断: 最佳 ep41 RMSE~0.099, 末轮~0.121)。与下游 _train_with_early_stop 口径一致 (GPT 评审 §4)。
+    # §4c: val 无失效监督 (全删失源域, 如 IGBT / 多源默认 val=最后器件恰为删失) 时
+    # rul_rmse 恒 0 → 早停退化 best@ep1 (ckpt≈未训练)。回退用 val_loss 并打印说明。
+    _val_failed = bool(np.any(event_observed[np.asarray(split) == "val"]))
+    _es_key = "rul_rmse" if _val_failed else "loss"
+    if not _val_failed:
+        print(f">> [es] val 无失效器件: 早停指标回退 val_loss (源域失效 {n_failed}/{n_failed + n_censored})")
     best = (float("inf"), None, None, 0)
     for ep in range(1, epochs + 1):
         model.train()
@@ -358,8 +369,8 @@ def run(args):
         print(f"  ep{ep:02d} train_loss={tl / n:.4f} | val_loss={vm['loss']:.4f} "
               f"val_rul_rmse={vm['rul_rmse']:.4f} mono_viol={vm['mono_violation']:.4f} "
               f"L_rul={vm['L_rul']:.4f}")
-        if vm["rul_rmse"] < best[0]:
-            best = (vm["rul_rmse"], vm,
+        if vm[_es_key] < best[0]:
+            best = (vm[_es_key], vm,
                     {k: v.detach().clone() for k, v in model.state_dict().items()}, ep)
 
     # 恢复最佳 val RUL RMSE 时点权重 (修复: ckpt/metrics 一致用最佳, 而非末轮)
@@ -368,9 +379,11 @@ def run(args):
     best_vm = best[1]
     CKPT_DIR.mkdir(exist_ok=True)
     tag = "smoke" if args.smoke else "pretrain"
+    _src_tag = getattr(args, "source_tag", None) or ""   # §4c 源域臂 ckpt 命名 (igbt/mosfet_igbt)
     comp = Path(args.config).stem
     suffix = "" if comp == "wheel" else f"_{comp}"   # 飞轮保持原名, 相控阵带后缀避免覆盖
-    ckpt = CKPT_DIR / f"source{suffix}_{enc}_{tag}.pt"
+    ckpt = CKPT_DIR / (f"source{suffix}_{_src_tag}_{enc}_{tag}.pt" if _src_tag
+                        else f"source{suffix}_{enc}_{tag}.pt")
     torch.save({"model": model.state_dict(), "encoder": enc, "L": L, "K": K,
                 "n_features": features.shape[1], "latent_dim": mc["latent_dim"]}, ckpt)
     metrics = {
@@ -587,6 +600,12 @@ def main():
     ap.add_argument("--config", default="configs/phased_array.yaml")
     ap.add_argument("--encoder", default=None, choices=["tcn", "lstm", "gru"])
     ap.add_argument("--smoke", action="store_true")
+    ap.add_argument("--val-device-ids", default=None,
+                    help="覆盖 config source.split.val_device_ids (逗号分隔; §4c 多源臂指定失效器件做 val)")
+    ap.add_argument("--source-tag", default=None,
+                    help="源域 ckpt tag (§4c 源域臂: igbt / mosfet_igbt; 命名 source_{tag}_{enc}_{...}.pt)")
+    ap.add_argument("--canonical-source", default=None,
+                    help="覆盖 config pretrain.canonical_source_path (§4c 源域臂)")
     ap.add_argument("--canonical", action="store_true",
                     help="用 schema_v4 canonical 源域 (T3/M3, 4 维 device_canonical_v1); "
                          "仅观测层 run() 生效, 与 --hi-layer 互斥")

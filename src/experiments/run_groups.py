@@ -74,6 +74,8 @@ _GROUP_MAP = {
     "ch_random_frozen":           ("random_frozen", "gru"),
     "ch_random_full_finetune":    ("random_full_mmd", "gru"),
     "ch_random_nommd":            ("random_full_nommd", "gru"),
+    "ch_source_igbt":             ("source_mmd_finetune", "gru"),   # §4c k-shot 源域臂: IGBT ckpt
+    "ch_source_multi":            ("source_mmd_finetune", "gru"),   # §4c k-shot 源域臂: MOSFET+IGBT 多源 ckpt
     "cross_level_transfer":       ("cross_level", "gru"),    # T6.3 层级消融 (level=service; 同 GRU 架构, level_control 纯归因层级)
     # 飞轮旧名 (兼容)
     "target_only":                ("target_only", None),
@@ -102,6 +104,8 @@ LABELS = {
     "ch_random_frozen":         "CH Random+Frozen *(M7)*",
     "ch_random_full_finetune":  "CH Random+Full+MMD *(M7)*",
     "ch_random_nommd":          "CH Random+Full+NoMMD *(M7)*",
+    "ch_source_igbt":            "CH Source IGBT *(§4c k-shot 臂)*",
+    "ch_source_multi":           "CH Source Multi *(§4c k-shot 臂)*",
     "cross_level_transfer":     "Cross-level (旧服务级) *(层级消融)*",
     "timesfm_zeroshot":         "TimesFM zero-shot *(PA7)*",
     "timesfm_xreg":             "TimesFM + XReg *(PA7)*",
@@ -375,9 +379,16 @@ def run_one_group(mode, seed, cfg, smoke=False, encoder_override=None,
         # source ckpt: M3 canonical 4 维重预训练产出 (覆盖旧 5 维); 飞轮用旧 source_*.pt
         # channel + service level 共用同一 ckpt (source schema 统一为 canonical 4 维)
         # 用 enc (encoder_override 优先) 而非 mc['encoder'], 支持 GRU/TCN 架构对齐实验
-        ckpt = str(CKPT_DIR / f"source{suffix}_{enc}_pretrain.pt")
+        # §4c k-shot 源域臂: 组名前缀决定源域 ckpt tag (startswith 防 _k{shot} 后缀 miss);
+        # MMD 窗口仍统一 MOSFET canonical — 臂间唯一差异 = 初始化 ckpt, 归因纯净
+        _src_tag = ("igbt" if group_name and group_name.startswith("ch_source_igbt")
+                    else "mosfet_igbt" if group_name and group_name.startswith("ch_source_multi")
+                    else "")
+        _ckpt_name = (f"source{suffix}_{_src_tag}_{enc}_pretrain.pt" if _src_tag
+                      else f"source{suffix}_{enc}_pretrain.pt")
+        ckpt = str(CKPT_DIR / _ckpt_name)
         if not Path(ckpt).exists():
-            ckpt = str(CKPT_DIR / f"source{suffix}_{enc}_smoke.pt")
+            ckpt = str(CKPT_DIR / _ckpt_name.replace("_pretrain.pt", "_smoke.pt"))
         if Path(ckpt).exists():
             model.load_pretrained(ckpt, device)
         elif not smoke:
@@ -825,6 +836,8 @@ def main():
     ap.add_argument("--k-shot", default=None,
                     help="T6.2/M7 k-shot 协议: 逗号分隔 k 值 (如 1,3,5,all); 每个跑一组; "
                          "仅 channel level 生效 (service level 无 k-shot 概念)")
+    ap.add_argument("--groups", default=None,
+                    help="显式组列表 (逗号分隔, 覆盖 config; §4c k-shot 源域臂实验用)")
     ap.add_argument("--output-dir", default=None,
                     help="P0-2: 产物输出目录 (results_*.md 与 all_metrics_*.json 写入指定目录, "
                          "供 Docker volume 挂载回收); 不指定则写 checkpoints/ 和 docs/")
@@ -841,7 +854,9 @@ def main():
     n_seed = 1 if args.smoke else args.seeds
     exp_cfg = cfg.get("experiments", {})
     # group 选择优先级: --level 显式 → 对应 *_groups; 否则默认 groups (PA6 旧组)
-    if args.level == "channel" or (args.k_shot and args.level != "service"):
+    if args.groups:
+        group_names = [g.strip() for g in args.groups.split(",") if g.strip()]
+    elif args.level == "channel" or (args.k_shot and args.level != "service"):
         # T6.4: channel level 自动合并 service_groups (cross_level_transfer) 作层级消融对照,
         # 让 level_control 在同一次跑算出 (by 字典同时有 ch_* + cross_level_transfer)
         ch_groups = list(exp_cfg.get("channel_groups", exp_cfg.get("groups", [])))

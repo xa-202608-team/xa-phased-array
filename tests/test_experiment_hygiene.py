@@ -496,6 +496,7 @@ def test_group_map_architecture_discipline():
         "random_full_finetune", "random_nommd",
         "ch_source_pretrain_frozen", "ch_source_mmd_physics", "ch_random_frozen",
         "ch_random_full_finetune", "ch_random_nommd", "cross_level_transfer",
+        "ch_source_igbt", "ch_source_multi",
     ]
     for name in attribution:
         assert _GROUP_MAP[name][1] == "gru",             f"{name} 迁移归因组应显式 GRU, 实际 {_GROUP_MAP[name][1]}"
