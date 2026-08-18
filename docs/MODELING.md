@@ -110,6 +110,11 @@ split）；源域按器件 leave-one-device-out。评估 RMSE/PHM/MAE 仅统计�
 > init/mmd control 均跨 0；target_gru − source_mmd = −0.0052 跨 0（旧"显著负迁移"为
 > 污染+伪重复+混架构复合假象）。最终口径：**未观察到正迁移，源权重贡献不可区分于
 > 随机初始化**（正迁移探索封口）。详见主仓 docs/开发推进计划/transfer_clear_review_and_positive_gain_plan.md §3.4。
+>
+> **k-shot×源域臂补充封口（2026-08-18，§4c）**：k∈{1,3} × 5 seeds × {random/MOSFET/IGBT/多源}
+> 四臂矩阵——k=1 全部 CI 跨 0；**k=3 下 MOSFET 与 IGBT 源初始化均显著更差**（CI 全正）。
+> 全监督+少样本双重封口：跨物理族（Si→GaN）源域即使在最近的器件判据层级 + 少样本场景
+> 也无正迁移价值，且少样本下显著有害。详见主仓方案文档 §4c。
 
 **结论分类（契约 §7）：无正迁移被证伪为负迁移——源 ckpt 显著负迁移 +
 MMD 无贡献，MOSFET→阵列服务寿命权重迁移路线被否证。**
