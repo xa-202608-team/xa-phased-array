@@ -76,6 +76,14 @@ _GROUP_MAP = {
     "ch_random_nommd":            ("random_full_nommd", "gru"),
     "ch_source_igbt":             ("source_mmd_finetune", "gru"),   # §4c k-shot 源域臂: IGBT ckpt
     "ch_source_multi":            ("source_mmd_finetune", "gru"),   # §4c k-shot 源域臂: MOSFET+IGBT 多源 ckpt
+    # A1 α-soft (§4d 四审方案): θ₀ = θ_rand + α·(θ_src − θ_rand), 源=MOSFET canonical;
+    # 训练协议与 ch_random_full_finetune/ch_source_mmd_physics 同 (S2 冻结→S3 全微调+MMD),
+    # 唯一变量 = encoder 初始化插值系数 α; a000 = α=0 校验臂 (应逐位复现 random 臂)
+    "ch_alpha_soft_a000":         ("alpha_soft_finetune", "gru"),
+    "ch_alpha_soft_a005":         ("alpha_soft_finetune", "gru"),
+    "ch_alpha_soft_a010":         ("alpha_soft_finetune", "gru"),
+    "ch_alpha_soft_a025":         ("alpha_soft_finetune", "gru"),
+    "ch_alpha_soft_a050":         ("alpha_soft_finetune", "gru"),
     "cross_level_transfer":       ("cross_level", "gru"),    # T6.3 层级消融 (level=service; 同 GRU 架构, level_control 纯归因层级)
     # 飞轮旧名 (兼容)
     "target_only":                ("target_only", None),
@@ -106,12 +114,64 @@ LABELS = {
     "ch_random_nommd":          "CH Random+Full+NoMMD *(M7)*",
     "ch_source_igbt":            "CH Source IGBT *(§4c k-shot 臂)*",
     "ch_source_multi":           "CH Source Multi *(§4c k-shot 臂)*",
+    "ch_alpha_soft_a000":        "CH α-soft α=0.00 *(A1 校验臂)*",
+    "ch_alpha_soft_a005":        "CH α-soft α=0.05 *(A1)*",
+    "ch_alpha_soft_a010":        "CH α-soft α=0.10 *(A1)*",
+    "ch_alpha_soft_a025":        "CH α-soft α=0.25 *(A1)*",
+    "ch_alpha_soft_a050":        "CH α-soft α=0.50 *(A1)*",
     "cross_level_transfer":     "Cross-level (旧服务级) *(层级消融)*",
     "timesfm_zeroshot":         "TimesFM zero-shot *(PA7)*",
     "timesfm_xreg":             "TimesFM + XReg *(PA7)*",
     "timesfm_lora_xreg":        "TimesFM + LoRA + XReg *(PA7)*",
     "main_timesfm_fusion":      "主模型 + TimesFM 融合 *(PA7)*",
 }
+
+
+def _alpha_from_group(group_name):
+    """A1 α-soft 组名 → α 值。
+
+    ch_alpha_soft_aXXX[_kN] → XXX/100 (如 a005→0.05, a050→0.5); 非 α 组返回 None。
+    k-shot 后缀用 split 截断, 与 _src_tag 的 startswith 约定互补。
+    """
+    if group_name and group_name.startswith("ch_alpha_soft_a"):
+        tag = group_name[len("ch_alpha_soft_a"):].split("_")[0]
+        return int(tag) / 100.0
+    return None
+
+
+def _source_ckpt_name(group_name, component, enc):
+    """组名 → 源域 ckpt 文件名 (source 臂与 alpha_soft 臂共用, 保证 α=1 端点同 ckpt)。
+
+    §4c 约定: 组名前缀决定源域 ckpt tag (startswith 防 _k{shot} 后缀 miss);
+    默认 MOSFET canonical — alpha_soft 臂也走此默认 (A1 主臂源域 = MOSFET)。
+    """
+    suffix = "" if component == "wheel" else f"_{component}"
+    _src_tag = ("igbt" if group_name and group_name.startswith("ch_source_igbt")
+                else "mosfet_igbt" if group_name and group_name.startswith("ch_source_multi")
+                else "")
+    return (f"source{suffix}_{_src_tag}_{enc}_pretrain.pt" if _src_tag
+            else f"source{suffix}_{enc}_pretrain.pt")
+
+
+def _interpolate_encoder(model, sd_enc, alpha):
+    """A1 α-soft 插值: θ₀ = θ_rand + α·(θ_src − θ_rand), 就地写回 model。
+
+    只插值 encoder.* 浮点张量 — 与 α=1 端点 (source 臂 load_pretrained) 的加载范围
+    严格一致, 其余参数 (adapter/heads) 保持 θ_rand, 端点可比性不受插值范围污染。
+    不消耗 RNG (torch.load/load_state_dict/张量算术均不触碰随机流)。
+    返回实际插值的张量数。
+    """
+    cur = model.state_dict()
+    mixed = {}
+    n_mixed = 0
+    for k, v in cur.items():
+        if k in sd_enc and v.dtype.is_floating_point:
+            mixed[k] = v + alpha * (sd_enc[k].to(device=v.device, dtype=v.dtype) - v)
+            n_mixed += 1
+        else:
+            mixed[k] = v
+    model.load_state_dict(mixed)
+    return n_mixed
 
 
 def _group_level(group_name):
@@ -263,8 +323,6 @@ def run_one_group(mode, seed, cfg, smoke=False, encoder_override=None,
     mmd_lambda = float(tc["mmd_lambda"])
     rho_phys_loss = float(_lc.get("rho_phys", 0.0))   # T13: ρ·L_phys 物理一致性权重 (rho_phys>0 时 S3 生效)
     enc = encoder_override or mc["encoder"]
-    # checkpoint 组件后缀: 飞轮 source_tcn / 相控阵 source_phased_array_tcn
-    suffix = "" if component == "wheel" else f"_{component}"
 
     # ---- 数据加载 (level 分流; T6.3 channel level 新增) ----
     if level == "channel":
@@ -375,20 +433,16 @@ def run_one_group(mode, seed, cfg, smoke=False, encoder_override=None,
 
     # target_only / random_frozen / random_full_mmd / random_full_nommd 不加载 checkpoint (随机初始化)
     # random_frozen: 冻结判 P0-3; random_full_mmd: 随机+S3+MMD; random_full_nommd: 随机+S3 无MMD (GPT §3 P0-2 MMD 归因)
-    if mode not in ("target_only", "random_frozen", "random_full_mmd", "random_full_nommd"):
+    if mode not in ("target_only", "random_frozen", "random_full_mmd", "random_full_nommd",
+                    "alpha_soft_finetune"):
         # source ckpt: M3 canonical 4 维重预训练产出 (覆盖旧 5 维); 飞轮用旧 source_*.pt
         # channel + service level 共用同一 ckpt (source schema 统一为 canonical 4 维)
         # 用 enc (encoder_override 优先) 而非 mc['encoder'], 支持 GRU/TCN 架构对齐实验
         # §4c k-shot 源域臂: 组名前缀决定源域 ckpt tag (startswith 防 _k{shot} 后缀 miss);
         # MMD 窗口仍统一 MOSFET canonical — 臂间唯一差异 = 初始化 ckpt, 归因纯净
-        _src_tag = ("igbt" if group_name and group_name.startswith("ch_source_igbt")
-                    else "mosfet_igbt" if group_name and group_name.startswith("ch_source_multi")
-                    else "")
-        _ckpt_name = (f"source{suffix}_{_src_tag}_{enc}_pretrain.pt" if _src_tag
-                      else f"source{suffix}_{enc}_pretrain.pt")
-        ckpt = str(CKPT_DIR / _ckpt_name)
+        ckpt = str(CKPT_DIR / _source_ckpt_name(group_name, component, enc))
         if not Path(ckpt).exists():
-            ckpt = str(CKPT_DIR / _ckpt_name.replace("_pretrain.pt", "_smoke.pt"))
+            ckpt = str(CKPT_DIR / Path(ckpt).name.replace("_pretrain.pt", "_smoke.pt"))
         if Path(ckpt).exists():
             model.load_pretrained(ckpt, device)
         elif not smoke:
@@ -398,6 +452,32 @@ def run_one_group(mode, seed, cfg, smoke=False, encoder_override=None,
                 f"`python -m src.train.pretrain --config configs/{component}.yaml "
                 f"{'--canonical' if component == 'phased_array' else ''}`")
         # smoke 模式允许无 checkpoint (encoder 随机初始化, 仅调试管线连通性)
+
+    # A1 α-soft (§4d 四审方案): θ₀ = θ_rand + α·(θ_src − θ_rand) — 剂量控制源先验。
+    # θ_rand = 当前构建权重: _build_model 调用点在 mode 分支之前且 alpha/random 两臂
+    # 此前代码路径完全一致 (数据加载/split/k-shot 采样相同), 本分支内 torch.load/
+    # load_state_dict/插值均不消耗 RNG → 同 seed 下 θ_rand 与 ch_random_full_finetune
+    # 严格同源 (α=0 校验臂应逐位复现 random 臂); ckpt 名与 source 臂共用 helper,
+    # α=1 端点 = ch_source_mmd_physics 同一 ckpt 文件。
+    _alpha = _alpha_from_group(group_name)
+    if _alpha is not None:
+        assert mode == "alpha_soft_finetune", f"α 组 {group_name} 的 mode 应为 alpha_soft_finetune"
+        ckpt_a = str(CKPT_DIR / _source_ckpt_name(group_name, component, enc))
+        if not Path(ckpt_a).exists():
+            ckpt_a = str(CKPT_DIR / Path(ckpt_a).name.replace("_pretrain.pt", "_smoke.pt"))
+        if Path(ckpt_a).exists():
+            sd = torch.load(ckpt_a, map_location=device)
+            if isinstance(sd, dict) and "model" in sd:
+                sd = sd["model"]
+            sd_enc = {k: v for k, v in sd.items() if k.startswith("encoder.")}
+            if not sd_enc:
+                raise ValueError(f"alpha_soft: ckpt 无 encoder.* 权重: {ckpt_a}")
+            n_mixed = _interpolate_encoder(model, sd_enc, _alpha)
+            print(f"  [α-soft] α={_alpha:.2f}: encoder 插值 {n_mixed}/{len(sd_enc)} 张量 "
+                  f"(θ₀ = θ_rand + α·(θ_src − θ_rand), 源=MOSFET canonical)")
+        elif not smoke:
+            raise FileNotFoundError(f"alpha_soft 组需要源 checkpoint: {ckpt_a}")
+        # smoke 无 ckpt: 保持随机初始化 (与 source 臂 smoke 纪律一致, 仅调试连通性)
 
     tag = f"{group_name or mode} seed{seed}"
     if mode == "source_only":
@@ -444,6 +524,11 @@ def run_one_group(mode, seed, cfg, smoke=False, encoder_override=None,
     m["seed"] = seed
     m["encoder"] = enc
     m["level"] = level
+    # A1 预注册纪律: α 只在 train/val 上选 — 所有组记录 val_rmse (eval_test 同口径,
+    # 仅失效轨迹), 端点臂 (random/source) 重跑时同样带上, α 选择集 {0,0.05,0.1,0.25,0.5,1} 全覆盖
+    m["val_rmse"] = eval_test(model, lva, device)["rmse"]
+    if _alpha is not None:
+        m["alpha"] = _alpha
     if k_shot is not None:
         m["k_shot"] = k_shot
     return m
