@@ -174,6 +174,63 @@ def _interpolate_encoder(model, sd_enc, alpha):
     return n_mixed
 
 
+# ---- CPU 并行 + 资源限制 + 增量落盘 (2026-08-18, 外部实验无资源限制挤死长跑矩阵事故后加固) ----
+_WORKER_THREADS = 4
+
+
+def _worker_init(threads=None):
+    """ProcessPoolExecutor 子进程资源限制。
+
+    事故背景: 外部实验未限资源时, 多进程 × PyTorch 默认全核 OMP 线程 的乘积
+    会线程/内存爆炸, 把本仓长跑矩阵挤死。每 worker 限制 torch CPU 线程数,
+    使资源占用 ≈ workers × threads (有界), 与外部实验共存时可控。
+    """
+    torch.set_num_threads(threads or _WORKER_THREADS)
+
+
+def _run_one_task(task):
+    """并行执行单元: 单 组×seed 的 run_one_group。
+
+    run_one_group 自带 set_seed + reset_global_memory_bank, 多进程下 RNG 与
+    MMD bank 均为进程私有 → 与串行行为一致 (顺序无关, 逐位等价)。
+    """
+    (mode, seed, cfg, smoke, enc_ov, component, tag_name, level, k_shot) = task
+    return run_one_group(mode, seed, cfg, smoke=smoke, encoder_override=enc_ov,
+                         component=component, group_name=tag_name, level=level,
+                         k_shot=k_shot)
+
+
+def _load_jsonl_records(jsonl_path):
+    """增量落盘恢复: 读 results_partial.jsonl, 返回 {(group, seed): 完整指标 dict}。
+
+    逐行 try 解析, 坏行 (中断时写一半) 跳过 — 对应组-seed 会重跑, 幂等安全。
+    记录含 run_one_group 产出的全部字段 (rmse/phm/mae/val_rmse/...), 调用方
+    须把旧记录重载入聚合器 by — 只跳过不重载会让恢复跑的 aggregate 缺臂。
+    """
+    records = {}
+    if not Path(jsonl_path).exists():
+        return records
+    for line in Path(jsonl_path).read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        key = (rec.get("group"), rec.get("seed"))
+        if key[0] is not None and key[1] is not None:
+            records[key] = rec
+    return records
+
+
+def _append_jsonl(jsonl_path, record):
+    """单组-seed 完成即落盘 (append + flush): 中断只损失正在跑的那一个组-seed。"""
+    with open(jsonl_path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False, default=float) + "\n")
+        f.flush()
+
+
 def _group_level(group_name):
     """组名 → level ('channel' / 'service')。
 
@@ -926,6 +983,12 @@ def main():
     ap.add_argument("--output-dir", default=None,
                     help="P0-2: 产物输出目录 (results_*.md 与 all_metrics_*.json 写入指定目录, "
                          "供 Docker volume 挂载回收); 不指定则写 checkpoints/ 和 docs/")
+    ap.add_argument("--workers", type=int, default=1,
+                    help="组-seed 级 CPU 并行进程数 (2026-08-18 加固): >1 时 ProcessPoolExecutor spawn 并行, "
+                         "每 worker 限 torch CPU 线程; GPU 显存 ≈ workers × 单进程占用, "
+                         "与外部实验共存时按显存余量选 (如 --workers 2)")
+    ap.add_argument("--threads-per-worker", type=int, default=4,
+                    help="每 worker 进程 torch CPU 线程上限 (默认 4); 防 多进程×全核线程 资源爆炸")
     args = ap.parse_args()
     # P0-2: 产物持久化 — --output-dir 指定产物目录 (Docker 挂载可回收); None=旧位置 (docs/ + checkpoints/)
     out_dir = Path(args.output_dir) if args.output_dir else None
@@ -965,6 +1028,9 @@ def main():
 
     by = {}   # group_name (或 group_name+k=..) -> [metrics]
     _failures = []   # P0-2: 失败传播 — 记录所有失败臂, main 末尾任一失败则 sys.exit(1)
+
+    # 任务收集: (mode, seed, cfg, smoke, enc_ov, component, tag_name, level, k_shot)
+    tasks = []
     for gname in group_names:
         if gname == "physical_extrap":
             continue                              # 物理基线单独 evaluate (非学习组)
@@ -989,17 +1055,59 @@ def main():
             by[tag_name] = []
             for s in range(n_seed):
                 seed = cfg["seed"] + s
+                tasks.append((mode, seed, cfg, args.smoke, enc_ov, component,
+                              tag_name, level, k_shot))
+
+    # 增量落盘 + 恢复: jsonl 记录已完成 组-seed, 中断重启只补缺口 (2026-08-18 事故加固);
+    # 旧记录须重载入 by 聚合器 (GPT 四审+1 修正) — 只跳过不重载会让恢复跑的
+    # aggregate/report 缺已完成臂, 产出看似完整实则缺数据的报告
+    jsonl_path = (out_dir if out_dir is not None else CKPT_DIR) / "results_partial.jsonl"
+    prior_records = _load_jsonl_records(jsonl_path)
+    if prior_records:
+        _n_total = len(tasks)
+        _task_keys = {(t[6], t[1]) for t in tasks}
+        tasks = [t for t in tasks if (t[6], t[1]) not in prior_records]
+        _n_reloaded = 0
+        for (_g, _s), _m in prior_records.items():
+            if _g in by and (_g, _s) in _task_keys:
+                by[_g].append(_m)
+                _n_reloaded += 1
+        print(f">> [resume] {jsonl_path}: 旧记录 {_n_reloaded} 条重载入聚合器, "
+              f"剩余重跑 {len(tasks)}/{_n_total}")
+
+    def _record(m):
+        by[m["group"]].append(m)
+        _append_jsonl(jsonl_path, m)          # m 含 group/seed (run_one_group 已写入)
+        print(f">> {m['group']:30s} seed{m['seed']} ({m['encoder']}, {m['level']}): "
+              f"RMSE={m['rmse']:.4f} PHM={m['phm']:.2f} MAE={m['mae']:.4f}"
+              + (f" k={m['k_shot']}" if m.get("k_shot") is not None else ""))
+
+    if args.workers > 1:
+        # CPU 并行: 组-seed 级多进程 (spawn), 每 worker 限 torch 线程;
+        # GPU 显存 ≈ workers × 单进程占用, 与外部实验共存时按余量选 workers
+        import concurrent.futures
+        torch.set_num_threads(args.threads_per_worker)
+        with concurrent.futures.ProcessPoolExecutor(
+                max_workers=args.workers, initializer=_worker_init,
+                initargs=(args.threads_per_worker,)) as ex:
+            futs = {ex.submit(_run_one_task, t): t for t in tasks}
+            for fut in concurrent.futures.as_completed(futs):
+                t = futs[fut]
                 try:
-                    m = run_one_group(mode, seed, cfg, smoke=args.smoke,
-                                      encoder_override=enc_ov, component=component,
-                                      group_name=tag_name, level=level, k_shot=k_shot)
-                    by[tag_name].append(m)
-                    print(f">> {tag_name:30s} seed{seed} ({m['encoder']}, {level}): "
-                          f"RMSE={m['rmse']:.4f} PHM={m['phm']:.2f} MAE={m['mae']:.4f}"
-                          + (f" k={k_shot}" if k_shot is not None else ""))
+                    _record(fut.result())
                 except Exception as exc:    # noqa: BLE001
-                    print(f"!! {tag_name} seed{seed} 失败: {exc}")
-                    _failures.append(f"{tag_name}/seed{seed}: {exc}")   # P0-2: 计数, main 末尾非零退出
+                    print(f"!! {t[6]} seed{t[1]} 失败: {exc}")
+                    _failures.append(f"{t[6]}/seed{t[1]}: {exc}")   # P0-2: 计数, main 末尾非零退出
+    else:
+        for mode, seed, _cfg, smoke, enc_ov, comp, tag_name, level, k_shot in tasks:
+            try:
+                m = run_one_group(mode, seed, cfg, smoke=smoke,
+                                  encoder_override=enc_ov, component=comp,
+                                  group_name=tag_name, level=level, k_shot=k_shot)
+                _record(m)
+            except Exception as exc:    # noqa: BLE001
+                print(f"!! {tag_name} seed{seed} 失败: {exc}")
+                _failures.append(f"{tag_name}/seed{seed}: {exc}")   # P0-2: 计数, main 末尾非零退出
 
     physical_by_seed = None
     if "physical_extrap" in group_names:
