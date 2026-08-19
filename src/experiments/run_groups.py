@@ -76,6 +76,7 @@ _GROUP_MAP = {
     "ch_random_nommd":            ("random_full_nommd", "gru"),
     "ch_source_igbt":             ("source_mmd_finetune", "gru"),   # §4c k-shot 源域臂: IGBT ckpt
     "ch_source_multi":            ("source_mmd_finetune", "gru"),   # §4c k-shot 源域臂: MOSFET+IGBT 多源 ckpt
+    "ch_simv1_source":            ("source_mmd_finetune", "gru"),   # §4e B 路线: sim_v1 (legacy) 源初始化, MMD 窗=v1 canonical
     # A1 α-soft (§4d 四审方案): θ₀ = θ_rand + α·(θ_src − θ_rand), 源=MOSFET canonical;
     # 训练协议与 ch_random_full_finetune/ch_source_mmd_physics 同 (S2 冻结→S3 全微调+MMD),
     # 唯一变量 = encoder 初始化插值系数 α; a000 = α=0 校验臂 (应逐位复现 random 臂)
@@ -114,6 +115,7 @@ LABELS = {
     "ch_random_nommd":          "CH Random+Full+NoMMD *(M7)*",
     "ch_source_igbt":            "CH Source IGBT *(§4c k-shot 臂)*",
     "ch_source_multi":           "CH Source Multi *(§4c k-shot 臂)*",
+    "ch_simv1_source":           "**CH Source sim_v1** *(§4e B 路线)*",
     "ch_alpha_soft_a000":        "CH α-soft α=0.00 *(A1 校验臂)*",
     "ch_alpha_soft_a005":        "CH α-soft α=0.05 *(A1)*",
     "ch_alpha_soft_a010":        "CH α-soft α=0.10 *(A1)*",
@@ -146,7 +148,8 @@ def _source_ckpt_name(group_name, component, enc):
     默认 MOSFET canonical — alpha_soft 臂也走此默认 (A1 主臂源域 = MOSFET)。
     """
     suffix = "" if component == "wheel" else f"_{component}"
-    _src_tag = ("igbt" if group_name and group_name.startswith("ch_source_igbt")
+    _src_tag = ("simv1" if group_name and group_name.startswith("ch_simv1_source")
+                else "igbt" if group_name and group_name.startswith("ch_source_igbt")
                 else "mosfet_igbt" if group_name and group_name.startswith("ch_source_multi")
                 else "")
     return (f"source{suffix}_{_src_tag}_{enc}_pretrain.pt" if _src_tag

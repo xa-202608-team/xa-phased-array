@@ -132,8 +132,14 @@ def main():
         fout.attrs["delta_thresholds"] = ",".join(f"{k}={v}" for k, v in deltas.items())
         for key in sorted(fin.keys()):
             g = fin[key]
-            f_sub = g["latent_sub_damage"][:]               # (T, 16) 子阵损伤真值 (M1)
             sa_feat = g["subarray_features"][:]              # (T, 16, 8) 子阵遥测
+            if "latent_sub_damage" in g:
+                f_sub = g["latent_sub_damage"][:]           # (T, 16) 子阵损伤真值 (M1)
+            else:
+                # legacy 标量动力学 (B 路线 §4e, sim_v1): 16 子阵共享阵列级损伤标量
+                # 广播 — 不是伪造, 是 legacy 物理的忠实表达 (损伤自由度 1 vs subdose 16,
+                # 即 B 路线受控域差距本体); 子阵差异仍来自 subarray_features 观测散布
+                f_sub = np.repeat(g["damage"][:][:, None], sa_feat.shape[1], axis=1)
             label_fail = g["label_fail"][:]                  # (T,) 服务越限标记
             params = {k: float(g.attrs[k]) for k in PARAM_ATTRS if k in g.attrs}
             eol_svc = int(np.argmax(label_fail)) if label_fail.any() else sa_feat.shape[0] - 1
