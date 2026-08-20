@@ -371,18 +371,55 @@ def _train_epoch(model, loader, opt, device, huber, mse, lam,
 
 
 @torch.no_grad()
-def eval_test(model, loader, device):
+def _bias_diag(p, t, ev, hi):
+    """§4h 误差方向/风险偏置诊断: e = RUL̂ − RUL 按 HI 真值三分箱 (label 非预测, 无泄漏)。
+
+    全部在归一化 RUL 空间; 失效样本精确真值, 删失样本仅下界 (bias 相对 lb)。
+    """
+    m = ev.astype(bool)
+    out = {}
+    if m.any():
+        err = p[m] - t[m]
+        hm = hi[m]
+        out["failed_all"] = {"n": int(m.sum()),
+                             "mean_bias": float(err.mean()),
+                             "median_bias": float(np.median(err)),
+                             "over_rate": float((err > 0).mean())}
+        for tag, sel in [("early", hm < 1.0 / 3.0),
+                         ("middle", (hm >= 1.0 / 3.0) & (hm < 2.0 / 3.0)),
+                         ("late", hm >= 2.0 / 3.0)]:
+            if sel.any():
+                ee = err[sel]
+                out[tag] = {"n": int(sel.sum()),
+                            "mean_bias": float(ee.mean()),
+                            "median_bias": float(np.median(ee)),
+                            "over_rate": float((ee > 0).mean())}
+    if (~m).any():
+        pc, lc = p[~m], t[~m]            # t = rul_lower_bound (删失下界)
+        out["censored"] = {"n": int((~m).sum()),
+                           "lb_violation_rate": float((pc < lc).mean()),   # 激进违反
+                           "mean_bias_vs_lb": float((pc - lc).mean()),
+                           "over_rate": float((pc > lc).mean())}
+    return out
+
+
+def eval_test(model, loader, device, bias_diag=False):
     """P0-2: 分开报失效轨迹 (精确 RUL 的 RMSE/PHM/MAE) + 删失轨迹 (下界违反率)。
-    删失无精确 RUL, 混算 RMSE 会把"距仿真截止时刻"当退化标签 (复核第三条)。"""
+    删失无精确 RUL, 混算 RMSE 会把"距仿真截止时刻"当退化标签 (复核第三条)。
+    bias_diag=True 额外落 §4h 误差方向诊断 (early-stop 调用不传, 零开销)。"""
     model.eval()
     preds, labels, evs = [], [], []
-    for x, h, r, ev, lb, dmg in loader:
-        x = x.to(device)
-        B, Kk = x.size(0), x.size(1)
-        _, rul_p, _ = model(x.reshape(B * Kk, x.size(2), x.size(3)))
-        preds.append(rul_p.cpu().numpy())
-        labels.append(r.reshape(-1).numpy())
-        evs.append(ev.reshape(-1).numpy())
+    his = [] if bias_diag else None
+    with torch.no_grad():
+        for x, h, r, ev, lb, dmg in loader:
+            x = x.to(device)
+            B, Kk = x.size(0), x.size(1)
+            _, rul_p, _ = model(x.reshape(B * Kk, x.size(2), x.size(3)))
+            preds.append(rul_p.cpu().numpy())
+            labels.append(r.reshape(-1).numpy())
+            evs.append(ev.reshape(-1).numpy())
+            if bias_diag:
+                his.append(h.reshape(-1).numpy())
     p = np.concatenate(preds) if preds else np.array([0.0])
     t = np.concatenate(labels) if labels else np.array([0.0])
     e = np.concatenate(evs) if evs else np.array([True])
@@ -391,11 +428,15 @@ def eval_test(model, loader, device):
     rmse_f = float(np.sqrt(np.mean((p[m] - t[m]) ** 2))) if m.any() else 0.0
     mae_f = float(np.mean(np.abs(p[m] - t[m]))) if m.any() else 0.0
     censor_viol = float(np.mean(p[cm] < t[cm])) if cm.any() else 0.0   # pred<lb 比例 (越低越坏)
-    return {"rmse": rmse_f, "mae": mae_f,                                   # 兼容下游聚合 (失效轨迹)
-            "rmse_failed": rmse_f, "mae_failed": mae_f,
-            "phm": phm_score(p[m], t[m]) if m.any() else 0.0,
-            "censor_violation_rate": censor_viol,
-            "n_failed": int(m.sum()), "n_censored": int(cm.sum())}
+    out = {"rmse": rmse_f, "mae": mae_f,                                # 兼容下游聚合 (失效轨迹)
+           "rmse_failed": rmse_f, "mae_failed": mae_f,
+           "phm": phm_score(p[m], t[m]) if m.any() else 0.0,
+           "censor_violation_rate": censor_viol,
+           "n_failed": int(m.sum()), "n_censored": int(cm.sum())}
+    if bias_diag:
+        h_arr = np.concatenate(his) if his else np.array([0.0])
+        out["bias_diag"] = _bias_diag(p, t, e, h_arr)
+    return out
 
 
 def _train_with_early_stop(model, ltr, lva, opt, device, huber, mse, lam, e, tag,
@@ -651,7 +692,7 @@ def run_one_group(mode, seed, cfg, smoke=False, encoder_override=None,
                                use_phys=(rho_phys_loss > 0 and damageT is not None),
                                rho_phys=rho_phys_loss)   # T13: ρ·L_phys (channel level 无真值时禁用)
 
-    m = eval_test(model, lte, device)
+    m = eval_test(model, lte, device, bias_diag=True)   # §4h: 误差方向诊断随 jsonl 落盘
     m["mode"] = mode
     m["group"] = group_name or mode
     m["seed"] = seed
