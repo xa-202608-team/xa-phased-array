@@ -3,13 +3,19 @@ from __future__ import annotations
 
 import pytest
 import torch
+import numpy as np
 
+import src.experiments.run_groups as run_groups
 from src.experiments.run_groups import (
     _GRU_L0_KEYS,
     _GRU_L1_KEYS,
     _GRU_PROJ_KEYS,
+    _GROUP_MAP,
+    LABELS,
     _layerwise_depth_from_group,
     _load_layerwise_encoder,
+    _resolve_group,
+    _source_ckpt_name,
 )
 from src.transfer.adapter import TransferModel
 
@@ -100,3 +106,73 @@ def test_loader_rejects_invalid_encoder_contract(state_mutation, depth, match):
 
     with pytest.raises(ValueError, match=match):
         _load_layerwise_encoder(_model(seed=23), source, depth=depth)
+
+
+def test_p1_p2_groups_resolve_to_gru_and_mosfet_k3_checkpoint():
+    """若 P1/P2 未注册、深度错配或改走非 MOSFET 源 checkpoint，此测试会失败。"""
+    source_ckpt = _source_ckpt_name("ch_source_mmd_physics_k3", "phased_array", "gru")
+    for depth in (1, 2):
+        group = f"ch_layerwise_gru_p{depth}_k3"
+        assert _GROUP_MAP[f"ch_layerwise_gru_p{depth}"] == ("layerwise_finetune", "gru")
+        assert _resolve_group(f"ch_layerwise_gru_p{depth}", {})[:2] == ("layerwise_finetune", "gru")
+        assert _layerwise_depth_from_group(group) == depth
+        assert _source_ckpt_name(group, "phased_array", "gru") == source_ckpt
+        assert LABELS[f"ch_layerwise_gru_p{depth}"] == f"CH Layer-wise GRU P{depth} *(A3)*"
+
+
+@pytest.mark.parametrize("depth", [1, 2])
+def test_runner_builds_random_model_before_loading_prefix_and_records_depth(
+        monkeypatch, tmp_path, depth):
+    """若 loader 在完整随机模型构建前触发，或结果漏 layerwise_depth，此测试会失败。"""
+    cfg = run_groups.load_config("configs/phased_array.yaml")
+    cfg["pretrain"]["device"] = "cpu"
+    cfg["model"]["input_len_L"] = 4
+    cfg["pretrain"]["seq_block_K"] = 2
+    cfg["transfer"]["split"] = {"train": 1, "val": 1, "test": 1}
+    cfg["reproducibility"]["deterministic"] = True
+    cfg["reproducibility"]["cudnn_benchmark"] = False
+
+    n_per_traj = 60
+    tid = np.repeat(np.arange(3), n_per_traj)
+    x_target = np.arange(len(tid) * 4, dtype=np.float32).reshape(len(tid), 4)
+    hi_target = np.linspace(1.0, 0.1, len(tid), dtype=np.float32)
+    rul_target = np.linspace(20.0, 1.0, len(tid), dtype=np.float32)
+    events = []
+
+    monkeypatch.setattr(run_groups, "CKPT_DIR", tmp_path)
+    source = run_groups._build_model(cfg, 4, 4, "cpu", encoder_override="gru").state_dict()
+    torch.save({"model": source}, tmp_path / "source_phased_array_gru_pretrain.pt")
+    monkeypatch.setattr(
+        run_groups, "load_target_channel",
+        lambda *_args, **_kwargs: (x_target, hi_target, rul_target, tid, tid, np.ones(len(tid), dtype=bool),
+                                    rul_target.copy(), 3, np.zeros(len(tid), dtype=int)))
+    monkeypatch.setattr(
+        run_groups, "load_source",
+        lambda *_args, **_kwargs: (x_target, hi_target, tid, np.arange(len(tid)), np.array(["train"] * len(tid))))
+    monkeypatch.setattr(run_groups, "split_trajectories", lambda *_args, **_kwargs: ([0], [1], [2]))
+    monkeypatch.setattr(run_groups, "assert_split_by_trajectory", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(run_groups, "_train_with_early_stop", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(run_groups, "eval_test", lambda *_args, **_kwargs: {
+        "rmse": 0.1, "phm": 0.2, "mae": 0.3, "censor_violation_rate": 0.0})
+
+    original_build = run_groups._build_model
+    original_loader = run_groups._load_layerwise_encoder
+
+    def build_spy(*args, **kwargs):
+        events.append("build")
+        return original_build(*args, **kwargs)
+
+    def loader_spy(*args, **kwargs):
+        events.append("load")
+        return original_loader(*args, **kwargs)
+
+    monkeypatch.setattr(run_groups, "_build_model", build_spy)
+    monkeypatch.setattr(run_groups, "_load_layerwise_encoder", loader_spy)
+
+    result = run_groups.run_one_group(
+        "layerwise_finetune", seed=7, cfg=cfg, smoke=True, encoder_override="gru",
+        component="phased_array", group_name=f"ch_layerwise_gru_p{depth}_k3",
+        level="channel", k_shot=3)
+
+    assert events == ["build", "load"]
+    assert result["layerwise_depth"] == depth

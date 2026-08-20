@@ -85,6 +85,8 @@ _GROUP_MAP = {
     "ch_alpha_soft_a010":         ("alpha_soft_finetune", "gru"),
     "ch_alpha_soft_a025":         ("alpha_soft_finetune", "gru"),
     "ch_alpha_soft_a050":         ("alpha_soft_finetune", "gru"),
+    "ch_layerwise_gru_p1":        ("layerwise_finetune", "gru"),
+    "ch_layerwise_gru_p2":        ("layerwise_finetune", "gru"),
     "cross_level_transfer":       ("cross_level", "gru"),    # T6.3 层级消融 (level=service; 同 GRU 架构, level_control 纯归因层级)
     # 飞轮旧名 (兼容)
     "target_only":                ("target_only", None),
@@ -121,6 +123,8 @@ LABELS = {
     "ch_alpha_soft_a010":        "CH α-soft α=0.10 *(A1)*",
     "ch_alpha_soft_a025":        "CH α-soft α=0.25 *(A1)*",
     "ch_alpha_soft_a050":        "CH α-soft α=0.50 *(A1)*",
+    "ch_layerwise_gru_p1":       "CH Layer-wise GRU P1 *(A3)*",
+    "ch_layerwise_gru_p2":       "CH Layer-wise GRU P2 *(A3)*",
     "cross_level_transfer":     "Cross-level (旧服务级) *(层级消融)*",
     "timesfm_zeroshot":         "TimesFM zero-shot *(PA7)*",
     "timesfm_xreg":             "TimesFM + XReg *(PA7)*",
@@ -543,7 +547,7 @@ def run_one_group(mode, seed, cfg, smoke=False, encoder_override=None,
     # target_only / random_frozen / random_full_mmd / random_full_nommd 不加载 checkpoint (随机初始化)
     # random_frozen: 冻结判 P0-3; random_full_mmd: 随机+S3+MMD; random_full_nommd: 随机+S3 无MMD (GPT §3 P0-2 MMD 归因)
     if mode not in ("target_only", "random_frozen", "random_full_mmd", "random_full_nommd",
-                    "alpha_soft_finetune"):
+                    "alpha_soft_finetune", "layerwise_finetune"):
         # source ckpt: M3 canonical 4 维重预训练产出 (覆盖旧 5 维); 飞轮用旧 source_*.pt
         # channel + service level 共用同一 ckpt (source schema 统一为 canonical 4 维)
         # 用 enc (encoder_override 优先) 而非 mc['encoder'], 支持 GRU/TCN 架构对齐实验
@@ -587,6 +591,26 @@ def run_one_group(mode, seed, cfg, smoke=False, encoder_override=None,
         elif not smoke:
             raise FileNotFoundError(f"alpha_soft 组需要源 checkpoint: {ckpt_a}")
         # smoke 无 ckpt: 保持随机初始化 (与 source 臂 smoke 纪律一致, 仅调试连通性)
+
+    # A3 分层迁移：完整随机模型构建后，只覆盖严格 GRU 前缀；其余 θ_rand 保持不变。
+    _layerwise_depth = _layerwise_depth_from_group(group_name)
+    if _layerwise_depth is not None:
+        assert mode == "layerwise_finetune", (
+            f"分层组 {group_name} 的 mode 应为 layerwise_finetune")
+        ckpt_lw = CKPT_DIR / _source_ckpt_name(group_name, component, enc)
+        if not ckpt_lw.exists():
+            ckpt_lw = CKPT_DIR / ckpt_lw.name.replace("_pretrain.pt", "_smoke.pt")
+        if ckpt_lw.exists():
+            sd = torch.load(ckpt_lw, map_location=device)
+            if isinstance(sd, dict) and "model" in sd:
+                sd = sd["model"]
+            sd_enc = {key: value for key, value in sd.items() if key.startswith("encoder.")}
+            loaded = _load_layerwise_encoder(model, sd_enc, _layerwise_depth)
+            print(f"  [layerwise] P{_layerwise_depth}: 加载 {len(loaded)}/10 GRU encoder 张量 "
+                  "(其余参数保留 θ_rand)")
+        elif not smoke:
+            raise FileNotFoundError(f"layerwise 组需要源 checkpoint: {ckpt_lw}")
+        # smoke 无 checkpoint 时保留随机初始化，仅用于验证训练编排连通性。
 
     tag = f"{group_name or mode} seed{seed}"
     if mode == "source_only":
@@ -638,6 +662,8 @@ def run_one_group(mode, seed, cfg, smoke=False, encoder_override=None,
     m["val_rmse"] = eval_test(model, lva, device)["rmse"]
     if _alpha is not None:
         m["alpha"] = _alpha
+    if _layerwise_depth is not None:
+        m["layerwise_depth"] = _layerwise_depth
     if k_shot is not None:
         m["k_shot"] = k_shot
     return m
