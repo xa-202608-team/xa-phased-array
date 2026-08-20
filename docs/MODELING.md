@@ -146,12 +146,15 @@ n=5 的描述性 mean/95% CI，不能将方向包装为正迁移，亦不能对 
 数字孪生和 target-only 预测为主线；本矩阵只定义 MOSFET 源初始化的迁移适用边界与复现指针
 （`outputs/layerwise_a3/analysis.json`、`outputs/layerwise_a3/analysis.md`），不改变模型或命令默认配置。
 
-**结论分类（契约 §7）：无正迁移被证伪为负迁移——源 ckpt 显著负迁移 +
-MMD 无贡献，MOSFET→阵列服务寿命权重迁移路线被否证。**
+**历史 A1 端点证据（已由 A3 清零重审与最终口径取代）**：以下保留早期 A1 endpoint 的
+冻结数字及其当时判读，供追溯 P0 修复后的实验事实；它们不是本组件当前权威结论，也不能与
+A3 的 validation-only 选层结果并列为两条现役结论。当前唯一现役结论为上文 A3：
+`depth*=R`、`primary=null`、`verdict=no_source_candidate`，未观察到确认性正迁移；这并不把
+历史 A1 证据重述为正迁移。
 
-冻结数字（P0 修复后 5 seeds 全量重跑，归一化 RMSE，越低越好；
+历史 A1 冻结数字（P0 修复后 5 seeds 全量重跑，归一化 RMSE，越低越好；
 出处：项目主仓 `docs/开发推进计划/progress.md` "PA6 GPT 三轮审阅 P0-1/2/3 修复"
-与"第九次终修"两节；本仓镜像叙述以本节为准）：
+与"第九次终修"两节；不得用其取代上文 A3 的当前口径）：
 
 | 组 | RMSE（5 seed 均值） | 说明 |
 |----|--------------------|------|
@@ -162,23 +165,23 @@ MMD 无贡献，MOSFET→阵列服务寿命权重迁移路线被否证。**
 | random_frozen / source_pretrain_finetune | 0.2590 / 0.2758 | 判冻结协议归因 |
 | 基线 constant / arrhenius | 0.3917 / 0.5290 | 非学习基线（constant 为 5 seed 均值；arrhenius 0.5290 为五划分口径，其 5-seed mean 实为 0.5674） |
 
-归因链（配对 ΔRMSE 95% CI）：
+历史 A1 端点归因链（配对 ΔRMSE 95% CI，当时判读）：
 
 - 迁移增益（target_gru − source_mmd）= **−0.0326，CI [−0.054, −0.011] 全负**
-  → 显著负迁移（5/5 seed 差）；
+  → 当时记录为显著负迁移（5/5 seed 差）；
 - init_control（source_pretrain − random_frozen）= +0.0168，CI [+0.003, +0.030]
-  全正 → 源初始化显著有害；
+  全正 → 当时记录为源初始化显著有害；
 - full_control（source_mmd − random_full）= +0.0244，CI [+0.006, +0.043]
-  全正 → S3 全微调下源 ckpt 仍显著有害；
-- mmd_control（random_full − random_nommd）CI 跨 0 → MMD 无可度量贡献。
+  全正 → 当时记录为 S3 全微调下源 ckpt 显著有害；
+- mmd_control（random_full − random_nommd）CI 跨 0 → 当时记录为 MMD 无可度量贡献。
 
-历史教训（写进结论的原因）：P0-1 修复前 `rul[eol:]=0` 的 EOL 后零标签窗混入
-训练/测试，曾制造第七次"迁移追平 target"假象；修复后真实结论为显著负迁移。
+历史教训（保留原因）：P0-1 修复前 `rul[eol:]=0` 的 EOL 后零标签窗混入
+训练/测试，曾制造第七次"迁移追平 target"假象；修复后该 A1 端点记录为显著负迁移。
 **任何迁移定论前必须确认评估无泄漏。**
 
-保留该结论的工程意义：通过随机/全微调/无MMD 三对照发现 MOSFET 跨域直接共享
-寿命表征不可行（两域不共享条件寿命映射 P(RUL|z)），迁移适用边界与负迁移诊断
-本身成为本组件的论证内容；组件差异化主卖点 = 三级数字孪生 + 优雅降级 +
+保留该历史 A1 记录的工程意义：它说明为什么需进行 A3 的清零重审与 validation-only
+选层；最终仍以 A3 的无确认性正信号界定 MOSFET 源初始化的适用边界。组件差异化主卖点 =
+三级数字孪生 + 优雅降级 +
 遥测驱动 target-only 预测（0.2521 vs constant 0.3917，1.55×）。
 
 ## 7. 里程碑与已知边界

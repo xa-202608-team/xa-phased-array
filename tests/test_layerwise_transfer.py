@@ -90,6 +90,21 @@ def test_incompatible_later_prefix_tensor_leaves_model_unchanged():
         assert torch.equal(value, before[key]), key
 
 
+def test_incompatible_prefix_dtype_leaves_model_unchanged():
+    """若 loader 接受同形状异 dtype 源张量或破坏原子性，此测试会失败。"""
+    model = _model(seed=23)
+    before = {key: value.detach().clone() for key, value in model.state_dict().items()}
+    source = _source_encoder_state()
+    key = "encoder.gru.weight_ih_l0"
+    source[key] = source[key].to(torch.float64)
+
+    with pytest.raises(ValueError, match="张量不兼容"):
+        _load_layerwise_encoder(model, source, depth=1)
+
+    for model_key, value in model.state_dict().items():
+        assert torch.equal(value, before[model_key]), model_key
+
+
 @pytest.mark.parametrize(
     ("state_mutation", "depth", "match"),
     [

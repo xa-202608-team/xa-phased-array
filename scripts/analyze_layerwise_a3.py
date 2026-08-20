@@ -227,8 +227,11 @@ def render_markdown(report: dict) -> str:
     lines.extend(["", "## Incremental 配对 CI（固定 seeds 42--46）", ""])
     lines.extend(_format_ci(name, stats) for name, stats in report["incremental"].items())
 
-    extension = "是" if report["extension_required"] else "否"
     primary = report["primary"]
+    extension = (
+        "是/已完成" if primary is not None and primary["n"] == 10
+        else "是" if report["extension_required"] else "否"
+    )
     if primary is None:
         sample_label = "无主比较（未进入扩测门）"
     elif primary["n"] == 5:

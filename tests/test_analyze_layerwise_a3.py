@@ -235,6 +235,26 @@ def test_ten_seed_confirmation_keeps_preselected_depth_and_uses_only_primary_ext
     assert report["verdict"] == "no_confirmed_gain"
 
 
+def test_renderer_marks_completed_ten_seed_primary_as_extension_completed():
+    """若已完成的 10-seed primary 被误渲染为“是否扩测：否”，此测试会失败。"""
+    data = _base_data()
+    for seed in range(47, 52):
+        for arm, val_rmse, rmse in (
+            ("R", 0.30, 0.30),
+            ("P1", 0.20, 0.20),
+        ):
+            record = _record(arm, seed, val_rmse, rmse)
+            data[record["group"]][seed] = record
+
+    report = analyze(data)
+    markdown = render_markdown(report)
+
+    assert report["primary"]["n"] == 10
+    assert report["extension_required"] is False
+    assert "是否扩测：是/已完成" in markdown
+    assert "样本标签：n=10 确认门" in markdown
+
+
 def test_cli_writes_recomputable_json_and_markdown_from_records(tmp_path):
     data = _base_data()
     a1_path = tmp_path / "a1.jsonl"
