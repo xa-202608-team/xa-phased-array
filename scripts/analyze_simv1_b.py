@@ -38,7 +38,7 @@ def paired_ci(data, ga, gb):
     sd = statistics.stdev(ds) if n > 1 else 0.0
     crit = float(sp.t.ppf(0.975, n - 1)) if n > 1 else 0.0
     se = sd / math.sqrt(max(n, 1))
-    return md, sd, md - crit * se, md + crit * se, sum(1 for d in ds if d < 0)
+    return md, sd, md - crit * se, md + crit * se, sum(1 for d in ds if d < 0), n
 
 
 def main():
@@ -51,13 +51,14 @@ def main():
         vr = statistics.mean(v for v, _ in data[gr].values())
         ts = statistics.mean(t for _, t in data[gs].values())
         tr = statistics.mean(t for _, t in data[gr].values())
-        md, sd, lo, hi, npos = paired_ci(data, gs, gr)
+        md, sd, lo, hi, npos, n = paired_ci(data, gs, gr)
         crosses = lo <= 0 <= hi
         verdict = ("跨0" if crosses else ("全负: simv1 显著更优" if md < 0 else "全正: simv1 显著更差"))
         results[k] = (md, lo, hi, crosses)
         print(f"  [{k:>4}] simv1 val={vs:.4f} test={ts:.4f} | random val={vr:.4f} test={tr:.4f}")
         print(f"         Δ(simv1−random)={md:+.4f} ±{sd:.4f}, CI95 [{lo:+.4f},{hi:+.4f}], "
-              f"正向 seed {npos}/5 → {verdict}  [exploratory, n<10]")
+              f"正向 seed {npos}/{n} → {verdict}"
+              + ("  [exploratory, n<10]" if n < 10 else ""))
 
     # §4e 三分支判读
     kall_neg = not results["kall"][3] and results["kall"][0] < 0
@@ -72,7 +73,7 @@ def main():
     # 跨矩阵方向对比: 同协议同 seed 下, 异构源 (MOSFET, A1 矩阵端点) vs 同构源 (simv1)
     if A1_JSONL.exists():
         a1 = load(A1_JSONL)
-        md_m, sd_m, lo_m, hi_m, np_m = paired_ci(
+        md_m, sd_m, lo_m, hi_m, np_m, _n = paired_ci(
             a1, "ch_source_mmd_physics_k3", "ch_random_full_finetune_k3")
         b3 = results["k3"]
         print(f"\n[跨矩阵对比 k=3] MOSFET 异构源 Δ={md_m:+.4f} vs simv1 同构源 Δ={b3[0]:+.4f}")
