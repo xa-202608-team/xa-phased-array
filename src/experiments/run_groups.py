@@ -213,14 +213,16 @@ def _load_layerwise_encoder(
         raise ValueError(f"GRU encoder checkpoint 键不匹配: missing={missing}, extra={extra}")
     selected = _GRU_L0_KEYS if depth == 1 else (_GRU_L0_KEYS | _GRU_L1_KEYS)
     target = model.state_dict()
+    # 先完整预检，拒绝无效 checkpoint 时模型必须保持逐位不变。
+    for key in sorted(selected):
+        src, dst = sd_enc[key], target[key]
+        if src.shape != dst.shape or src.dtype != dst.dtype:
+            raise ValueError(
+                f"layer-wise 张量不兼容 {key}: source={src.shape}/{src.dtype}, "
+                f"target={dst.shape}/{dst.dtype}")
     with torch.no_grad():
         for key in sorted(selected):
-            src, dst = sd_enc[key], target[key]
-            if src.shape != dst.shape or src.dtype != dst.dtype:
-                raise ValueError(
-                    f"layer-wise 张量不兼容 {key}: source={src.shape}/{src.dtype}, "
-                    f"target={dst.shape}/{dst.dtype}")
-            dst.copy_(src)
+            target[key].copy_(sd_enc[key])
     return tuple(sorted(selected))
 
 

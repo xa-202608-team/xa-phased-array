@@ -70,6 +70,20 @@ def test_p2_copies_both_gru_layers_without_copying_projection():
         assert torch.equal(model.state_dict()[key], before[key]), key
 
 
+def test_incompatible_later_prefix_tensor_leaves_model_unchanged():
+    """若先复制再发现后续 l0 张量不兼容，此测试会失败。"""
+    model = _model(seed=23)
+    before = {key: value.detach().clone() for key, value in model.state_dict().items()}
+    source = _source_encoder_state()
+    source["encoder.gru.weight_ih_l0"] = torch.zeros(1)
+
+    with pytest.raises(ValueError, match="张量不兼容"):
+        _load_layerwise_encoder(model, source, depth=1)
+
+    for key, value in model.state_dict().items():
+        assert torch.equal(value, before[key]), key
+
+
 @pytest.mark.parametrize(
     ("state_mutation", "depth", "match"),
     [
