@@ -177,6 +177,53 @@ def _interpolate_encoder(model, sd_enc, alpha):
     return n_mixed
 
 
+# A3 分层迁移：GRU 前缀按嵌套深度严格加载，projection 始终保留目标域随机初始化。
+_GRU_L0_KEYS = frozenset({
+    "encoder.gru.weight_ih_l0", "encoder.gru.weight_hh_l0",
+    "encoder.gru.bias_ih_l0", "encoder.gru.bias_hh_l0",
+})
+_GRU_L1_KEYS = frozenset({
+    "encoder.gru.weight_ih_l1", "encoder.gru.weight_hh_l1",
+    "encoder.gru.bias_ih_l1", "encoder.gru.bias_hh_l1",
+})
+_GRU_PROJ_KEYS = frozenset({"encoder.proj.weight", "encoder.proj.bias"})
+_GRU_ENCODER_KEYS = _GRU_L0_KEYS | _GRU_L1_KEYS | _GRU_PROJ_KEYS
+
+
+def _layerwise_depth_from_group(group_name: str | None) -> int | None:
+    """从 A3 组名解析要迁移的 GRU 前缀深度。"""
+    if not group_name:
+        return None
+    for depth in (1, 2):
+        prefix = f"ch_layerwise_gru_p{depth}"
+        if group_name == prefix or group_name.startswith(prefix + "_k"):
+            return depth
+    return None
+
+
+def _load_layerwise_encoder(
+        model: TransferModel, sd_enc: dict[str, torch.Tensor], depth: int) -> tuple[str, ...]:
+    """严格加载 GRU 的连续前缀层，不加载 projection 且不消耗随机数。"""
+    if depth not in (1, 2):
+        raise ValueError(f"layer-wise depth 仅支持 1/2, 收到 {depth}")
+    actual = set(sd_enc)
+    if actual != set(_GRU_ENCODER_KEYS):
+        missing = sorted(_GRU_ENCODER_KEYS - actual)
+        extra = sorted(actual - _GRU_ENCODER_KEYS)
+        raise ValueError(f"GRU encoder checkpoint 键不匹配: missing={missing}, extra={extra}")
+    selected = _GRU_L0_KEYS if depth == 1 else (_GRU_L0_KEYS | _GRU_L1_KEYS)
+    target = model.state_dict()
+    with torch.no_grad():
+        for key in sorted(selected):
+            src, dst = sd_enc[key], target[key]
+            if src.shape != dst.shape or src.dtype != dst.dtype:
+                raise ValueError(
+                    f"layer-wise 张量不兼容 {key}: source={src.shape}/{src.dtype}, "
+                    f"target={dst.shape}/{dst.dtype}")
+            dst.copy_(src)
+    return tuple(sorted(selected))
+
+
 # ---- CPU 并行 + 资源限制 + 增量落盘 (2026-08-18, 外部实验无资源限制挤死长跑矩阵事故后加固) ----
 _WORKER_THREADS = 4
 
