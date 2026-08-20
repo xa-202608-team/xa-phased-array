@@ -15,6 +15,7 @@ from scripts.analyze_layerwise_a3 import (  # noqa: E402
     analyze,
     load_records,
     paired_stats,
+    render_markdown,
     select_depth,
 )
 
@@ -124,6 +125,19 @@ def test_random_validation_win_has_no_primary_or_extension_and_directions_are_fi
     assert report["incremental"]["Full-P2"]["left"] == "Full"
     assert report["incremental"]["Full-P2"]["right"] == "P2"
     assert report["incremental"]["Full-P2"]["mean"] == pytest.approx(0.25)
+
+
+def test_renderer_marks_no_primary_as_not_entering_extension_gate():
+    data = _base_data()
+    for seed in range(42, 47):
+        data[GROUPS["R"]][seed]["val_rmse"] = 0.10
+
+    report = analyze(data)
+    markdown = render_markdown(report)
+    assert report["primary"] is None
+    assert "是否扩测：否" in markdown
+    assert "样本标签：无主比较（未进入扩测门）" in markdown
+    assert "n=10 确认门" not in markdown
 
 
 def test_paired_stats_reports_sample_statistics_and_rejects_incomplete_pairs():

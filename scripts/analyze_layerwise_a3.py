@@ -229,7 +229,14 @@ def render_markdown(report: dict) -> str:
 
     extension = "是" if report["extension_required"] else "否"
     primary = report["primary"]
-    exploratory = "n<10 探索性" if primary is not None and primary["n"] < 10 else "n=10 确认门"
+    if primary is None:
+        sample_label = "无主比较（未进入扩测门）"
+    elif primary["n"] == 5:
+        sample_label = "n<10 探索性"
+    elif primary["n"] == 10:
+        sample_label = "n=10 确认门"
+    else:
+        sample_label = f"n={primary['n']} 非预注册样本规模"
     lines.extend(
         [
             "",
@@ -237,7 +244,7 @@ def render_markdown(report: dict) -> str:
             "",
             f"- depth*：{report['selected_depth']}",
             f"- 是否扩测：{extension}",
-            f"- 样本标签：{exploratory}",
+            f"- 样本标签：{sample_label}",
             f"- 判读：{report['verdict']}",
             "",
         ]
