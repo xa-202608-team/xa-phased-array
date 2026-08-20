@@ -117,6 +117,35 @@ split）；源域按器件 leave-one-device-out。评估 RMSE/PHM/MAE 仅统计�
 > 注：本实验为通道级任务，非独立器件级退化/RUL 实验；后者变体中 HI 动力学层（全监督）
 > 已测为零增益，HI 层+少样本与 per-element 任务未测（见方案文档 §4c 任务边界表）。
 
+**A3 Layer-wise 迁移定位（2026-08-20，冻结分析）**：嵌套前缀矩阵固定为 R / P1 / P2 /
+Full，固定 channel level、k=3、seeds 42–46；训练事实锚定为 commit
+`8965e8e4826a56b653aeed2050dd4ae32119a5a2`。其后的 `8c770d6` 仅作 post-run Markdown
+“无主比较”标签渲染修正，`analysis.json` 的数值和判读未变，**不是训练重跑**。`depth*` 必须
+只按冻结的 42–46 validation mean 选择：
+
+| 臂 | n | validation RMSE 均值 | test RMSE 均值 |
+|---|---:|---:|---:|
+| R | 5 | 0.28568636 | 0.29248160 |
+| P1 | 5 | 0.32654703 | 0.32863832 |
+| P2 | 5 | 0.30240330 | 0.32007623 |
+| Full | 5 | 0.32858711 | 0.32340968 |
+
+结果为 `depth*=R`。因此没有源层候选，`primary=null`；P1/P2 没有主比较。下表只保留固定
+n=5 的描述性 mean/95% CI，不能将方向包装为正迁移，亦不能对 P1/P2 作有益或有害判定：
+
+| 类型 | 配对 | mean | 95% CI |
+|---|---|---:|---|
+| direct | P1−R | +0.03615672 | [−0.01820913, +0.09052258] |
+| direct | P2−R | +0.02759463 | [−0.01075982, +0.06594907] |
+| direct | Full−R | +0.03092808 | [+0.01564872, +0.04620744] |
+| incremental | P2−P1 | −0.00856210 | [−0.05329801, +0.03617382] |
+| incremental | Full−P2 | +0.00333346 | [−0.04510583, +0.05177275] |
+
+`extension_required=false`，不进入 10-seed 扩测；冻结 `verdict=no_source_candidate`。A3 没有
+确认性正信号，按判停不重开 A2、进入 RC/交付。主预测模型仍为 `ch_target_only_gru`，以三级
+数字孪生和 target-only 预测为主线；本矩阵只定义 MOSFET 源初始化的迁移适用边界与复现指针
+（`outputs/layerwise_a3/analysis.json`、`outputs/layerwise_a3/analysis.md`），不改变模型或命令默认配置。
+
 **结论分类（契约 §7）：无正迁移被证伪为负迁移——源 ckpt 显著负迁移 +
 MMD 无贡献，MOSFET→阵列服务寿命权重迁移路线被否证。**
 
