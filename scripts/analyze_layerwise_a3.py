@@ -18,6 +18,25 @@ SELECTION_SEEDS = frozenset(range(42, 47))
 EXTENSION_SEEDS = frozenset(range(42, 52))
 
 
+def _exactly_equal(left, right) -> bool:
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        return left.keys() == right.keys() and all(
+            _exactly_equal(left[key], right[key]) for key in left
+        )
+    if isinstance(left, list):
+        return len(left) == len(right) and all(
+            _exactly_equal(left_item, right_item)
+            for left_item, right_item in zip(left, right)
+        )
+    if isinstance(left, float) and left == 0.0 and right == 0.0:
+        return math.copysign(1.0, left) == math.copysign(1.0, right)
+    if isinstance(left, float) and math.isnan(left) and math.isnan(right):
+        return True
+    return left == right
+
+
 def load_records(paths: list[Path]) -> dict[str, dict[int, dict]]:
     """读取 JSONL，并拒绝同一组与 seed 的非完全相同记录。"""
     data: dict[str, dict[int, dict]] = {}
@@ -30,10 +49,12 @@ def load_records(paths: list[Path]) -> dict[str, dict[int, dict]]:
             seed = int(record["seed"])
             group_records = data.setdefault(group, {})
             previous = group_records.get(seed)
-            if previous is not None and previous != record:
-                raise ValueError(
-                    f"冲突记录：group={group}, seed={seed}，位置={path}:{line_number}"
-                )
+            if previous is not None:
+                if not _exactly_equal(previous, record):
+                    raise ValueError(
+                        f"冲突记录：group={group}, seed={seed}，位置={path}:{line_number}"
+                    )
+                continue
             group_records[seed] = record
     return data
 
@@ -69,18 +90,23 @@ def paired_stats(data, left, right, seeds) -> dict:
         for seed in selected_seeds
     ]
     n = len(differences)
-    mean = statistics.mean(differences)
-    std = statistics.stdev(differences)
-    critical = float(scipy_stats.t.ppf(0.975, n - 1))
-    half_width = critical * std / math.sqrt(n)
+    if all(math.isfinite(difference) for difference in differences):
+        mean = statistics.mean(differences)
+        std = statistics.stdev(differences)
+        critical = float(scipy_stats.t.ppf(0.975, n - 1))
+        half_width = critical * std / math.sqrt(n)
+        ci95_lo = mean - half_width
+        ci95_hi = mean + half_width
+    else:
+        mean = std = ci95_lo = ci95_hi = math.nan
     return {
         "left": left,
         "right": right,
         "n": n,
         "mean": mean,
         "std": std,
-        "ci95_lo": mean - half_width,
-        "ci95_hi": mean + half_width,
+        "ci95_lo": ci95_lo,
+        "ci95_hi": ci95_hi,
         "negative_count": sum(difference < 0.0 for difference in differences),
     }
 
@@ -143,20 +169,24 @@ def analyze(data) -> dict:
         return report
 
     initial_primary = direct[f"{selected_depth}-R"]
-    has_extension = _has_complete_extension(data, selected_depth)
-    report["primary"] = (
-        paired_stats(data, selected_depth, "R", sorted(EXTENSION_SEEDS))
-        if has_extension else initial_primary
-    )
+    report["primary"] = initial_primary
 
     # 只有初始 n=5 CI 全负才允许进入浅层候选与其后扩测判读。
-    if initial_primary["ci95_hi"] >= 0.0:
+    initial_candidate = (
+        math.isfinite(initial_primary["ci95_hi"])
+        and initial_primary["ci95_hi"] < 0.0
+    )
+    if not initial_candidate:
         return report
+    has_extension = _has_complete_extension(data, selected_depth)
     if not has_extension:
         report["extension_required"] = True
         report["verdict"] = "shallow_candidate"
         return report
 
+    report["primary"] = paired_stats(
+        data, selected_depth, "R", sorted(EXTENSION_SEEDS)
+    )
     primary = report["primary"]
     selected_records = data[GROUPS[selected_depth]]
     random_records = data[GROUPS["R"]]

@@ -64,10 +64,14 @@ def test_selection_uses_only_validation_seeds_and_never_test_rmse():
 
 def test_load_records_deduplicates_identical_rows_and_rejects_conflicts(tmp_path):
     original = _record("R", 42, 0.30, 0.31)
-    same = dict(original)
+    same = dict(reversed(list(original.items())))
     input_path = tmp_path / "same.jsonl"
     input_path.write_text(
-        "\n" + json.dumps(original) + "\n" + json.dumps(same) + "\n",
+        "\n"
+        + json.dumps(original)
+        + "\n"
+        + json.dumps(same, separators=(",", ":"))
+        + "\n",
         encoding="utf-8",
     )
 
@@ -83,6 +87,25 @@ def test_load_records_deduplicates_identical_rows_and_rejects_conflicts(tmp_path
     )
     with pytest.raises(ValueError, match="冲突记录"):
         load_records([conflict_path])
+
+
+@pytest.mark.parametrize(
+    ("left_value", "right_value"),
+    [(1, 1.0), (0.0, -0.0)],
+)
+def test_load_records_rejects_numeric_type_and_signed_zero_conflicts(
+    tmp_path, left_value, right_value
+):
+    left = _record("R", 42, 0.30, left_value)
+    right = _record("R", 42, 0.30, right_value)
+    input_path = tmp_path / "numeric-conflict.jsonl"
+    input_path.write_text(
+        json.dumps(left) + "\n" + json.dumps(right) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="冲突记录"):
+        load_records([input_path])
 
 
 def test_random_validation_win_has_no_primary_or_extension_and_directions_are_fixed():
@@ -137,6 +160,36 @@ def test_full_validation_win_never_reopens_full_endpoint():
     assert report["primary"]["right"] == "R"
     assert report["extension_required"] is False
     assert report["verdict"] == "full_endpoint_not_reopened"
+
+
+def test_non_finite_initial_ci_cannot_trigger_extension():
+    data = _base_data()
+    data[GROUPS["P1"]][42]["rmse"] = math.nan
+
+    report = analyze(data)
+    assert report["selected_depth"] == "P1"
+    assert report["primary"]["n"] == 5
+    assert report["extension_required"] is False
+    assert report["verdict"] == "no_confirmed_gain"
+
+
+def test_complete_extension_cannot_promote_primary_before_initial_gate():
+    data = _base_data()
+    data[GROUPS["P1"]][42]["rmse"] = 0.50
+    for seed in range(47, 52):
+        for arm, val_rmse, rmse in (
+            ("R", 0.30, 0.30),
+            ("P1", 0.20, 0.10),
+        ):
+            record = _record(arm, seed, val_rmse, rmse)
+            data[record["group"]][seed] = record
+
+    report = analyze(data)
+    assert report["selected_depth"] == "P1"
+    assert report["primary"]["n"] == 5
+    assert report["primary"]["ci95_hi"] >= 0.0
+    assert report["extension_required"] is False
+    assert report["verdict"] == "no_confirmed_gain"
 
 
 def test_ten_seed_confirmation_keeps_preselected_depth_and_uses_only_primary_extension():
