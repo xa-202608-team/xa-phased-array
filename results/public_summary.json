@@ -1,68 +1,35 @@
 {
   "schema_version": "1.1.0",
   "component": "phased_array",
-  "status": "VERIFIED_WITH_SOURCES",
-  "verified_at": "2026-08-15",
-  "conclusion": "NO_POSITIVE_TRANSFER_SUPPORTED",
-  "note": "逐项注明出处，未核实数字不入内。正式 5-seed 冻结数字的完整上下文与归因链见 docs/MODELING.md §6（原始出处：项目主仓 docs/开发推进计划/progress.md \"PA6 GPT 三轮审阅 P0-1/2/3 修复\"与\"第九次终修\"两节，2026-07-28 冻结）。",
-  "metrics": [
-    {
-      "name": "target_only_gru_rmse_5seed",
-      "value": 0.2521,
-      "unit": "normalized RUL RMSE（越低越好）",
-      "source": "docs/MODELING.md §6（主模型：无迁移目标域 GRU，P0 修复后 5 seeds 均值）"
-    },
-    {
-      "name": "source_mmd_physics_rmse_5seed",
-      "value": 0.2847,
-      "unit": "normalized RUL RMSE",
-      "source": "docs/MODELING.md §6（主迁移组：源 ckpt + S3 全微调 + MMD + 物理一致性）"
-    },
-    {
-      "name": "transfer_gain_delta_rmse",
-      "value": -0.0326,
-      "unit": "配对 ΔRMSE（target_gru − source_mmd），负值=迁移更差",
-      "source": "勘误 2026-08-17: 该 CI 为 50traj 旧口径, 已撤回; 200traj 5-seed 配对 CI [−0.0104,+0.0071] 跨 0 → 未观察到正迁移 (见 docs/MODELING.md §6 勘误)"
-    },
-    {
-      "name": "init_control_delta_rmse",
-      "value": 0.0168,
-      "unit": "配对 ΔRMSE（source_pretrain − random_frozen），正值=源初始化有害",
-      "source": "docs/MODELING.md §6（95% CI [+0.003, +0.030] 全正）"
-    },
-    {
-      "name": "full_control_delta_rmse",
-      "value": 0.0244,
-      "unit": "配对 ΔRMSE（source_mmd − random_full_finetune），正值=源 ckpt 有害",
-      "source": "docs/MODELING.md §6（95% CI [+0.006, +0.043] 全正）"
-    },
-    {
-      "name": "baseline_constant_rmse_5seed",
-      "value": 0.3917,
-      "unit": "normalized RUL RMSE",
-      "source": "docs/MODELING.md §6（最强非学习基线，5 seed 均值；约为主模型的 1.55 倍，主模型更优）"
-    },
-    {
-      "name": "baseline_arrhenius_rmse_5seed",
-      "value": 0.529,
-      "unit": "normalized RUL RMSE",
-      "source": "docs/MODELING.md §6（物理外推基线，五划分口径）"
-    },
-    {
-      "name": "smoke_pipeline_check",
-      "value": "PASS",
-      "unit": null,
-      "source": "docs/results_phased_array_smoke.md（smoke/合成数据管线连通性验证，全部组 RMSE≈0 仅证明管线可跑，非正式数字）"
-    }
-  ],
+  "status": "VERIFIED_WITH_BOUNDARY_EVIDENCE",
+  "verified_at": "2026-08-21",
+  "conclusion": "NO_CONFIRMED_POSITIVE_TRANSFER",
+  "primary_model": "target_only_gru + phased-array three-level digital twin",
+  "metrics": {
+    "full_supervised_source_minus_random_delta": 0.0170,
+    "full_supervised_source_minus_random_ci95": [-0.0231, 0.0571],
+    "k3_mosfet_source_minus_random_ci_direction": "全正（显著更差）",
+    "a1_alpha_1_minus_random_delta": 0.0309,
+    "a1_alpha_1_minus_random_ci95": [0.0156, 0.0462],
+    "a1_intermediate_alpha_conclusion": "alpha=0.05/0.10/0.25/0.50 均未获得 CI 全负；低剂量无害化但无确认增益",
+    "a3_depth_star": "random",
+    "a3_source_candidate": false,
+    "b_kall_n10_test_delta": -0.0096,
+    "b_kall_n10_test_ci95": [-0.0367, 0.0175],
+    "b_kall_n10_val_delta": -0.0229,
+    "b_kall_n10_val_ci95": [-0.0472, 0.0014],
+    "bias_diag_igbt_late_delta_mean_bias": 0.1083,
+    "bias_diag_igbt_late_ci95": [0.0365, 0.1801]
+  },
+  "interpretation": "异构全监督无可测收益；k=3 异构源显著负迁移；A1/A3 可减弱伤害但无确认增益；B 同构代理方向改善但 test CI 跨 0。物理语义对齐是必要条件而非充分条件。",
   "reproduce_commands": [
     "bash scripts/reproduce_judge.sh --output outputs/judge",
     "bash scripts/reproduce_full.sh --output outputs/full"
   ],
   "caveats": [
-    "正式冻结数字来自项目主仓 progress.md 记录的 P0 修复后 5-seed 全量重跑，本仓镜像叙述见 docs/MODELING.md §6；本仓重建同等数字需真实 NASA 源域（docs/DATA_DICTIONARY.md §7）+ reproduce_full（约小时级 CPU）。",
-    "reproduce_judge/full 在无真实源域时自动落 source_mode=synthetic，其指标仅证明管线连通，不得引用为正式结果。",
-    "单指标入口 component.predict（causal_single_telemetry）为因果趋势基线，不与 PyTorch 主模型指标口径混同（docs/MODELING.md §5）。"
-  ],
-  "_reattribution_errata_2026_08_17": "迁移结论清零重审: L_phys 全零占位污染(通道级) + 混架构归因 + 温度单位(K vs °C) 已修复 (fix/migration-experiment-clear); 旧冻结数字作废, 统一 GRU 协议重跑后刷新"
+    "NASA 原始数据、NASA 派生源域特征与源域 checkpoint 不进入 RC payload。",
+    "B sim_v1→sim_v2 是受控机制代理，不等同于真实 sim-to-real。",
+    "所有迁移 CI 均为 per-seed 配对 CI；n=5 结果标探索性，B k=all 扩测 n=10 test 仍跨 0。",
+    "未来重开正迁移的触发条件是真实 GaN RFALT 或真实相控阵遥测等同物理族数据到位。"
+  ]
 }
