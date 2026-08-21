@@ -56,6 +56,10 @@ def load_target_channel(h5_path: Path | str, drop_features: list | None = None,
     ck_list, tid_list, sid_list = [], [], []
     traj_ids_set: set[int] = set()
     with h5py.File(h5_path, "r") as f:
+        # 清零重审: 旧版 channel_features.h5 的 T_dev_C 列为 Kelvin (未 −273.15), 缺标记即提示重建
+        if str(f.attrs.get("t_dev_unit", "")) != "degC":
+            print(f"[warning] {h5_path} 缺 t_dev_unit='degC' 标记 (疑似旧版 Kelvin canonical); "
+                  "请重建: python -m src.sim.build_channel_hi")
         traj_keys = sorted(f.keys())
         for tk in traj_keys:
             traj_grp = f[tk]

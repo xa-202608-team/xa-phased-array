@@ -91,12 +91,83 @@ split）；源域按器件 leave-one-device-out。评估 RMSE/PHM/MAE 仅统计�
 
 ## 6. 跨域迁移结论（冻结）：NO_POSITIVE_TRANSFER_SUPPORTED
 
-**结论分类（契约 §7）：无正迁移被证伪为负迁移——源 ckpt 显著负迁移 +
-MMD 无贡献，MOSFET→阵列服务寿命权重迁移路线被否证。**
+> **⚠ 勘误（2026-08-17 迁移结论清零重审）**：本节数字为 50 轨迹时代的旧冻结口径，
+> 与最新 200 轨迹矩阵及三项协议缺陷冲突，**"显著负迁移"结论撤回**，待统一协议重跑后再定论：
+>
+> 1. **最新 200traj 服务级（5 seeds）**：迁移增益 (target_gru − source_mmd) = −0.0017，
+>    CI95 [−0.0104, +0.0071] **跨 0**；init_control / full_control / mmd_control 全部跨 0
+>    （05_结果/reference/phased_array/01_PA6_服务级主矩阵/all_metrics_phased_array_200traj.json）。
+>    正确表述：**未观察到正迁移，源权重无可测增益**（非"显著负迁移"）。
+> 2. **通道级旧结论作废**：① ch_* 迁移组的 ρ·L_phys 使用全零 damage 占位（实验污染）；
+>    ② "CI 全负"基于 50 轨迹伪重复 CI，seed 级配对 t-CI 实为 [−0.0864, +0.0250] 跨 0（n=3）。
+> 3. **混架构归因失效**：source_mmd 历代跑 TCN、主模型 target_only_gru 跑 GRU，
+>    跨组比较无法归因源迁移（target_gru − source_mmd 混合了架构差异）。
+> 4. 修复见 commit（fix/migration-experiment-clear）：L_phys 无真值即禁用、迁移归因组统一
+>    显式 GRU、canonical T_dev_C 统一 °C（旧 Kelvin）。重跑前本节冻结数字仅供历史追溯。
+>
+> **重跑完成（2026-08-17，200 traj × 5 seeds，统一 GRU）**：预注册判停条款触发——
+> 源 ckpt 主归因 (source_mmd − random_full) = +0.0170，CI95 [−0.0231, +0.0571] 跨 0；
+> init/mmd control 均跨 0；target_gru − source_mmd = −0.0052 跨 0（旧"显著负迁移"为
+> 污染+伪重复+混架构复合假象）。最终口径：**未观察到正迁移，源权重贡献不可区分于
+> 随机初始化**（正迁移探索封口）。详见主仓 docs/开发推进计划/transfer_clear_review_and_positive_gain_plan.md §3.4。
+>
+> **k-shot×源域臂补充封口（2026-08-18，§4c）**：k∈{1,3} × 5 seeds × {random/MOSFET/IGBT/多源}
+> 四臂矩阵——k=1 全部 CI 跨 0；**k=3 下 MOSFET 与 IGBT 源初始化均显著更差**（CI 全正）。
+> 被否定的精确命题："器件语义 canonical 输入 + 少样本适配 → 通道寿命任务正迁移"。
+> 注：本实验为通道级任务，非独立器件级退化/RUL 实验；后者变体中 HI 动力学层（全监督）
+> 已测为零增益，HI 层+少样本与 per-element 任务未测（见方案文档 §4c 任务边界表）。
 
-冻结数字（P0 修复后 5 seeds 全量重跑，归一化 RMSE，越低越好；
+**A3 Layer-wise 迁移定位（2026-08-20，冻结分析）**：嵌套前缀矩阵固定为 R / P1 / P2 /
+Full，固定 channel level、k=3、seeds 42–46；训练事实锚定为 commit
+`8965e8e4826a56b653aeed2050dd4ae32119a5a2`。其后的 `8c770d6` 仅作 post-run Markdown
+“无主比较”标签渲染修正，`analysis.json` 的数值和判读未变，**不是训练重跑**。`depth*` 必须
+只按冻结的 42–46 validation mean 选择：
+
+| 臂 | n | validation RMSE 均值 | test RMSE 均值 |
+|---|---:|---:|---:|
+| R | 5 | 0.28568636 | 0.29248160 |
+| P1 | 5 | 0.32654703 | 0.32863832 |
+| P2 | 5 | 0.30240330 | 0.32007623 |
+| Full | 5 | 0.32858711 | 0.32340968 |
+
+结果为 `depth*=R`。因此没有源层候选，`primary=null`；P1/P2 没有主比较。下表只保留固定
+n=5 的描述性 mean/95% CI，不能将方向包装为正迁移，亦不能对 P1/P2 作有益或有害判定：
+
+| 类型 | 配对 | mean | 95% CI |
+|---|---|---:|---|
+| direct | P1−R | +0.03615672 | [−0.01820913, +0.09052258] |
+| direct | P2−R | +0.02759463 | [−0.01075982, +0.06594907] |
+| direct | Full−R | +0.03092808 | [+0.01564872, +0.04620744] |
+| incremental | P2−P1 | −0.00856210 | [−0.05329801, +0.03617382] |
+| incremental | Full−P2 | +0.00333346 | [−0.04510583, +0.05177275] |
+
+`extension_required=false`，不进入 10-seed 扩测；冻结 `verdict=no_source_candidate`。A3 没有
+确认性正信号，按判停不重开 A2、进入 RC/交付。主预测模型仍为 `ch_target_only_gru`，以三级
+数字孪生和 target-only 预测为主线；本矩阵只定义 MOSFET 源初始化的迁移适用边界与复现指针
+（`outputs/layerwise_a3/analysis.json`、`outputs/layerwise_a3/analysis.md`），不改变模型或命令默认配置。
+
+**B 同构代理与 §4h 偏差诊断（2026-08-20/21，终局补全）**：B sim_v1->sim_v2（同物理族
+受控 sim-to-real 代理，v1=legacy 标量动力学源域，k=all 扩至 10 seeds）test
+Δ=−0.0096 CI[−0.0367,+0.0175] 跨 0（7/10 seed 正向）、val Δ=−0.0229
+CI[−0.0472,+0.0014] 上界贴零--方向改善但未确认正迁移；k=3 Δ=+0.0351 跨 0。§4h
+偏差方向诊断（四臂 k=3，HI 真值三分箱）给出 IGBT late 箱 source−random
+Δmean_bias=+0.1083 CI[+0.0365,+0.1801]（5/5 seed）的机制证据（源先验在晚期退化
+阶段系统性高估 RUL），但 MOSFET/Multi 同箱 CI 跨 0，不泛化为全局机制。**迁移探索
+已冻结（父仓方案文档 §4g 终局）**：五重封口 = 全监督 CI 跨 0 + k=3 显著负 + A1
+剂量控制无效 + A3 无源层候选 + B 同构代理 test 跨 0；分级承认口径与重开条件
+（真实 GaN RFALT/真实遥测）见父仓 `transfer_clear_review_and_positive_gain_plan.md`
+§4g。RC 收口冻结交付口径：`results/public_summary.json` +
+`results/reference/transfer_boundary_summary.md`。
+
+**历史 A1 端点证据（已由 A3 清零重审与最终口径取代）**：以下保留早期 A1 endpoint 的
+冻结数字及其当时判读，供追溯 P0 修复后的实验事实；它们不是本组件当前权威结论，也不能与
+A3 的 validation-only 选层结果并列为两条现役结论。当前唯一现役结论为上文 A3：
+`depth*=R`、`primary=null`、`verdict=no_source_candidate`，未观察到确认性正迁移；这并不把
+历史 A1 证据重述为正迁移。
+
+历史 A1 冻结数字（P0 修复后 5 seeds 全量重跑，归一化 RMSE，越低越好；
 出处：项目主仓 `docs/开发推进计划/progress.md` "PA6 GPT 三轮审阅 P0-1/2/3 修复"
-与"第九次终修"两节；本仓镜像叙述以本节为准）：
+与"第九次终修"两节；不得用其取代上文 A3 的当前口径）：
 
 | 组 | RMSE（5 seed 均值） | 说明 |
 |----|--------------------|------|
@@ -107,23 +178,23 @@ MMD 无贡献，MOSFET→阵列服务寿命权重迁移路线被否证。**
 | random_frozen / source_pretrain_finetune | 0.2590 / 0.2758 | 判冻结协议归因 |
 | 基线 constant / arrhenius | 0.3917 / 0.5290 | 非学习基线（constant 为 5 seed 均值；arrhenius 0.5290 为五划分口径，其 5-seed mean 实为 0.5674） |
 
-归因链（配对 ΔRMSE 95% CI）：
+历史 A1 端点归因链（配对 ΔRMSE 95% CI，当时判读）：
 
 - 迁移增益（target_gru − source_mmd）= **−0.0326，CI [−0.054, −0.011] 全负**
-  → 显著负迁移（5/5 seed 差）；
+  → 当时记录为显著负迁移（5/5 seed 差）；
 - init_control（source_pretrain − random_frozen）= +0.0168，CI [+0.003, +0.030]
-  全正 → 源初始化显著有害；
+  全正 → 当时记录为源初始化显著有害；
 - full_control（source_mmd − random_full）= +0.0244，CI [+0.006, +0.043]
-  全正 → S3 全微调下源 ckpt 仍显著有害；
-- mmd_control（random_full − random_nommd）CI 跨 0 → MMD 无可度量贡献。
+  全正 → 当时记录为 S3 全微调下源 ckpt 显著有害；
+- mmd_control（random_full − random_nommd）CI 跨 0 → 当时记录为 MMD 无可度量贡献。
 
-历史教训（写进结论的原因）：P0-1 修复前 `rul[eol:]=0` 的 EOL 后零标签窗混入
-训练/测试，曾制造第七次"迁移追平 target"假象；修复后真实结论为显著负迁移。
+历史教训（保留原因）：P0-1 修复前 `rul[eol:]=0` 的 EOL 后零标签窗混入
+训练/测试，曾制造第七次"迁移追平 target"假象；修复后该 A1 端点记录为显著负迁移。
 **任何迁移定论前必须确认评估无泄漏。**
 
-保留该结论的工程意义：通过随机/全微调/无MMD 三对照发现 MOSFET 跨域直接共享
-寿命表征不可行（两域不共享条件寿命映射 P(RUL|z)），迁移适用边界与负迁移诊断
-本身成为本组件的论证内容；组件差异化主卖点 = 三级数字孪生 + 优雅降级 +
+保留该历史 A1 记录的工程意义：它说明为什么需进行 A3 的清零重审与 validation-only
+选层；最终仍以 A3 的无确认性正信号界定 MOSFET 源初始化的适用边界。组件差异化主卖点 =
+三级数字孪生 + 优雅降级 +
 遥测驱动 target-only 预测（0.2521 vs constant 0.3917，1.55×）。
 
 ## 7. 里程碑与已知边界

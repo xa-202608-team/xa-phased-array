@@ -1,0 +1,276 @@
+seed: 42
+source:
+  name: NASA-MOSFET-IGBT
+  primary: MOSFET_Thermal_Overstress_Aging
+  auxiliary:
+  - IGBT_Accelerated_Aging
+  n_devices_approx: 6
+  feature_names:
+  - RDS_drift
+  - T_case_C
+  - supply_V
+  - gate_voltage
+  - duty_cycle
+  features:
+    target_dim: 5
+  rul_cap_ratio: 0.35
+  failure:
+    threshold_type: normalized_delta
+    RDS_delta_threshold: 0.05
+  split:
+    method: leave_one_device_out
+    val_device_ids: []
+sim:
+  n_traj: 200
+  duration_years: 8.0
+  sample_period_s: 21600
+  physics_dt_s: 300
+  array:
+    n_elements: 256
+    grid:
+    - 16
+    - 16
+    element_spacing_lambda: 0.5
+    scan_az_deg_range:
+    - -45.0
+    - 45.0
+    scan_el_deg: 0.0
+    subarray_block: 4
+  physics:
+    Ea_eV_range:
+    - 0.7
+    - 1.1
+    time_exp_m: 0.5
+    Tj_range_C:
+    - 90.0
+    - 140.0
+    duty_cycle_range:
+    - 0.3
+    - 0.8
+    R_DS_drift_Delta_range:
+    - 1.2
+    - 1.5
+    IDSS_decay_range:
+    - 0.08
+    - 0.12
+    gm_decay_range:
+    - 0.04
+    - 0.08
+    phase_drift_deg_range:
+    - 0.0
+    - 5.0
+    device_spread_sigma: 0.3
+    life_scale_sigma: 0.3
+    D_EOL_fixed: 0.5765
+    damage_model:
+      coffin_manson:
+        enabled: true
+        deltaT_ref_K: 20.0
+        exponent_n: 3.0
+      rth_feedback:
+        enabled: true
+        a5: 0.3
+        Trise_per_Rth_K: 15.0
+    hotspot_field:
+      enabled: true
+      n_hotspots_range:
+      - 1
+      - 3
+      radius_lambda_range:
+      - 1.0
+      - 3.0
+      Tj_boost_C_range:
+      - 5.0
+      - 15.0
+    subarray_dose:
+      enabled: true
+      sigma_sub: 0.2
+    channel_dropout_weibull:
+      enabled: true
+      beta: 2.5
+  array_factor:
+    mode: azimuth_cut
+  link_budget:
+    initial_margin_dB_range:
+    - 1.5
+    - 2.0
+  service_limits:
+    SLL_max_dB: -8.0
+    theta_err_max_deg: 0.5
+    consecutive_windows: 4
+  disturbance:
+    noise_ratio: 0.01
+    spatial_cluster_prob: 0.2
+    telemetry_missing_prob: 0.0
+model:
+  encoder: tcn
+  input_len_L: 64
+  n_features_target: 12
+  tcn:
+    channels: 64
+    kernel_size: 5
+    num_blocks: 4
+    dropout: 0.1
+  latent_dim: 64
+  array_aggregator: attention
+loss:
+  lambda_rul: 1.0
+  alpha_trend: 0.5
+  beta_hi: 1.0
+  gamma_quantile: 0.3
+  lambda_align: 1.0
+  mu_mono: 1.0
+  nu_smooth: 0.1
+  rho_phys: 0.2
+  huber_delta: 1.0
+  censored_hinge_eta: 1.0
+pretrain:
+  source_feature_path: data/features/phased_array/schema_v3/source/mosfet_source_features.h5
+  canonical_source_path: data/features/phased_array/schema_ch_v1/source_simv1/simv1_canonical.h5
+  canonical_n_win: 512
+  source_id_field: device_id
+  epochs: 50
+  batch_size: 64
+  lr: 0.001
+  weight_decay: 1.0e-05
+  device: cuda
+  seq_block_K: 8
+  stride: 80
+  hi_mono_violation_threshold: 0.6
+  val_rul_rmse_threshold: null
+transfer:
+  mode: latent_legacy
+  stages:
+  - freeze
+  - adapter
+  - mmd
+  encoder_freeze: true
+  adapter_hidden: 64
+  gan_adapter: true
+  align_method: mmd
+  mmd_kernel: multiscale
+  hi_bins:
+  - - 0.0
+    - 0.2
+  - - 0.2
+    - 0.5
+  - - 0.5
+    - 0.8
+  - - 0.8
+    - 1.0
+  mmd_lambda: 1.0
+  split:
+    train: 0.15
+    val: 0.2
+    test: 0.65
+  finetune_lr: 0.0001
+  rul_max_norm: 4088
+  target_feature_path: data/features/phased_array/schema_v1/target/target_features.h5
+  ablation_drop_features: []
+  target_has_nodes: true
+  hi_layer:
+    target_aux_head: false
+    target_aux_alpha: 0.0
+    hi_window_stride: 50
+timesfm:
+  enabled: false
+  model: timesfm-2.5
+  input_series:
+  - HI_array
+  - EIRP_norm
+  - link_margin
+  xreg:
+  - T_j
+  - duty_cycle
+  - scan_az
+  - power_cmd
+  quantiles:
+  - 0.1
+  - 0.5
+  - 0.9
+  lora:
+    enabled: true
+    rank: 8
+  fusion: consistency
+channel_level:
+  enabled: true
+  feature_names:
+  - p_drift_norm
+  - T_dev_C
+  - duty
+  - drive_norm
+  n_features: 4
+  delta_thresholds:
+    R_DS: 0.35
+    I_DSS: 0.2
+    g_m: 0.15
+    P_out: 0.2
+  delta_source_R_DS: 0.05
+  rul_cap_ratio: 0.35
+  calibration_seed: 1234
+  feature_path: data/features/phased_array/schema_ch_v1/target/channel_features.h5
+experiments:
+  n_seeds: 5
+  groups:
+  - target_only_tcn
+  - target_only_gru
+  - source_pretrain_finetune
+  - source_mmd_physics
+  - random_frozen
+  - random_full_finetune
+  - random_nommd
+  - physical_extrap
+  channel_groups:
+  - ch_target_only_tcn
+  - ch_target_only_gru
+  - ch_source_pretrain_frozen
+  - ch_source_mmd_physics
+  - ch_random_frozen
+  - ch_random_full_finetune
+  - ch_random_nommd
+  service_groups:
+  - cross_level_transfer
+  k_shot:
+  - 1
+  - 3
+  - 5
+  - all
+  k_shot_seeds: 5
+  ablations:
+    channel_count_vs_continuous: true
+    full_af_vs_simplified: true
+    telemetry_sparsity:
+    - full
+    - subarray
+    - sparse
+  rul_cap_ratio: 0.35
+  primary_source_group: ch_source_mmd_physics
+  primary_model_group: ch_target_only_gru
+reproducibility:
+  deterministic: true
+  cudnn_benchmark: false
+fault_injection:
+  enabled: false
+  n_per_type: 15
+  rng_substream: 9001
+  anchor: eol_svc_nominal
+  types:
+    rth_step:
+      r_th_mult: 1.6
+      start_frac: 0.45
+      scope: subarray
+      sub_offset: 0
+    thermal_bias:
+      tj_offset_K: 8.0
+      ramp_windows: 10
+      start_frac: 0.35
+      scope: array
+    channel_open:
+      n_channels: 8
+      start_frac: 0.5
+      scope: subarray
+      sub_offset: 7
+    cal_freeze:
+      phase_residual_mult: 4.0
+      start_frac: 0.4
+      scope: array

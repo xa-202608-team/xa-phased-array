@@ -477,3 +477,62 @@ def test_phase3c_calls_run_hi_layer_static():
         "phase3c 不应再 import subprocess (改为直接调用 run_hi_layer)"
     assert "subprocess.run" not in script, \
         "phase3c 不应再调用 subprocess.run (改为直接调用 run_hi_layer)"
+
+
+# ============================================================ 清零重审: 架构纪律 + L_phys 污染根除
+
+def test_group_map_architecture_discipline():
+    """迁移归因组统一显式 GRU (与主模型 target_only_gru 同架构); *_tcn 组名真 TCN (名实一致)。
+
+    清零重审: 旧版 GRU target-only vs TCN transfer 混架构比较无法归因源迁移; 修复中间版
+    曾把 *_tcn 组强制成 GRU 造成名实不符。本测试锁死两条纪律。
+    """
+    from src.experiments.run_groups import _GROUP_MAP
+    for name, (_mode, enc) in _GROUP_MAP.items():
+        if name.endswith("_tcn"):
+            assert enc == "tcn", f"{name} 组名含 _tcn 应为真 TCN 架构消融, 实际 {enc}"
+    attribution = [
+        "source_pretrain_finetune", "source_mmd_physics", "random_frozen",
+        "random_full_finetune", "random_nommd",
+        "ch_source_pretrain_frozen", "ch_source_mmd_physics", "ch_random_frozen",
+        "ch_random_full_finetune", "ch_random_nommd", "cross_level_transfer",
+        "ch_source_igbt", "ch_source_multi",
+    ]
+    for name in attribution:
+        assert _GROUP_MAP[name][1] == "gru",             f"{name} 迁移归因组应显式 GRU, 实际 {_GROUP_MAP[name][1]}"
+
+
+def test_group_map_channel_transfer_groups_not_default_tcn():
+    """通道级迁移组不允许 None (config 默认 tcn) — 防回归到混架构归因。"""
+    from src.experiments.run_groups import _GROUP_MAP
+    for name in ["ch_source_pretrain_frozen", "ch_source_mmd_physics",
+                 "ch_random_frozen", "ch_random_full_finetune", "ch_random_nommd"]:
+        assert _GROUP_MAP[name][1] is not None, f"{name} 不应回落 config 默认 encoder"
+
+
+def test_channel_lphys_disabled_without_damage_truth():
+    """清零重审 P0: 通道级无 damage 真值时 S3 必须禁用 ρ·L_phys (全零占位会把 HI 拉向 0)。"""
+    rg_src = (ROOT / "src" / "experiments" / "run_groups.py").read_text(encoding="utf-8")
+    assert "damageT = None" in rg_src, "channel 分支应设 damageT=None (非全零占位)"
+    assert rg_src.count("damageT is not None") >= 3,         "mkDS damage_b + S3 两处 use_phys 应显式判 damageT is not None"
+    assert "np.zeros_like(rulT)" not in rg_src, "不应再出现全零 damage 占位"
+
+
+def test_target_seq_dataset_damage_none_placeholder_zero():
+    """TargetSeqDataset damage_b=None → 第 6 元 (dmg) 全 0 占位; 有真值时透传 (服务级)。"""
+    from src.transfer.train_transfer import TargetSeqDataset
+    L, K, T = 4, 2, 10
+    rng = np.random.default_rng(0)
+    x = rng.normal(size=(T, 3)).astype(np.float32)
+    hi = np.linspace(0.1, 0.9, T)
+    rul = np.linspace(1.0, 0.0, T)
+    tid = np.zeros(T, dtype=int)
+    dmg = np.linspace(0.0, 0.8, T)
+    ds_none = TargetSeqDataset(x, hi, rul, tid, L, K, damage_b=None)
+    ds_real = TargetSeqDataset(x, hi, rul, tid, L, K, damage_b=dmg)
+    assert len(ds_none) > 0 and len(ds_real) == len(ds_none)
+    for i in range(len(ds_none)):
+        dn = np.asarray(ds_none[i][-1], dtype=float)
+        dv = np.asarray(ds_real[i][-1], dtype=float)
+        assert (dn == 0.0).all(), "None 占位应为全 0"
+        assert not (dv == 0.0).all(), "真值不应被置 0"

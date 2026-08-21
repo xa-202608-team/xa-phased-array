@@ -119,3 +119,23 @@ def test_delta_only_from_config():
         assert k in stored, f"h5 缺 δ {k}"
         assert abs(stored[k] - float(deltas_cfg[k])) < 1e-9, \
             f"δ {k}: h5={stored[k]} vs config={deltas_cfg[k]} 不一致"
+
+
+# ================================================================ canonical x 温度单位 (清零重审)
+
+def test_build_canonical_x_t_dev_in_celsius():
+    """T_dev_C = sim Tj (Kelvin) − 273.15: 值域应在器件工作温区 (°C), 而非 ~300 K 量级。
+
+    清零重审 P0: 旧版直取 Kelvin 当 T_dev_C 用, 与源域 T_case_C (°C) 单位错位 273.15。
+    """
+    from src.sim.build_channel_hi import (
+        build_canonical_x, SA_COL_IDSS, SA_COL_POWER, SA_COL_TJ, SA_COL_AMP)
+    T = 12
+    sa = np.zeros((T, 8), dtype=np.float32)
+    sa[:, SA_COL_POWER] = np.linspace(1.0, 0.98, T)      # 轻微功率退化
+    sa[:, SA_COL_IDSS] = np.linspace(1.0, 0.95, T)
+    sa[:, SA_COL_TJ] = 333.15                            # 60 °C, sim 原生 Kelvin
+    sa[:, SA_COL_AMP] = 1.0
+    x = build_canonical_x(sa, duty=0.5, deltas={"I_DSS": 0.2, "P_out": 0.2})
+    assert np.allclose(x[:, 1], 60.0, atol=1e-4), "T_dev_C 应为 °C (Tj_K − 273.15)"
+    assert x[:, 1].max() < 200.0, "T_dev_C 出现 Kelvin 量级回归 (>200)"
