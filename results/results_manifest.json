@@ -2,8 +2,8 @@
   "schema_version": "1.1.0",
   "component": "phased_array",
   "status": "SOURCES_VERIFIED",
-  "verified_at": "2026-08-16",
-  "note": "results 槽位白名单清单（staging 装配与仓库边界守护消费，dry-run 评审补机制）。5 个结果文件为 legacy 快照迁入（metrics 4 + run log 1），size/sha256 为 2026-08-16 磁盘实测，不预填编造；结果工件本体按治理不入库（.log 扩展名任何位置均不受跟踪）；正式 RC 批准前 rc_payload=false，批准时按裁决翻转；指标门状态见 expected_metrics.json。",
+  "verified_at": "2026-08-21",
+  "note": "RC payload采用仿真数据、目标域特征与迁移边界摘要；NASA原始/派生源域数据与源域checkpoint不进入payload。",
   "entries": [
     {
       "path": "reference/all_metrics_phased_array.json",
@@ -93,6 +93,28 @@
       "redistributable": true,
       "source_url": null,
       "reproduce_status": "pending_legacy_verification",
+      "rc_payload": true
+    },
+    {
+      "path": "reference/transfer_boundary_summary.md",
+      "size": 2075,
+      "sha256": "fd531ded23e263518c9c8a683f2809a67c4e6073beb2348e17860829a78b82af",
+      "role": "migration_boundary_summary",
+      "random_seeds": [
+        42,
+        43,
+        44,
+        45,
+        46
+      ],
+      "command": "scripts/analyze_alpha_soft_a1.py; scripts/analyze_simv1_b.py; scripts/analyze_bias_diag.py",
+      "config": "configs/phased_array.yaml",
+      "contract_version": "component-contract-v1.1.0",
+      "git_commit": "current-local-boundary-freeze",
+      "source_mode": "synthetic",
+      "redistributable": true,
+      "source_url": null,
+      "reproduce_status": "verified_local",
       "rc_payload": true
     }
   ]
