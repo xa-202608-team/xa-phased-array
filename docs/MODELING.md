@@ -146,6 +146,19 @@ n=5 的描述性 mean/95% CI，不能将方向包装为正迁移，亦不能对 
 数字孪生和 target-only 预测为主线；本矩阵只定义 MOSFET 源初始化的迁移适用边界与复现指针
 （`outputs/layerwise_a3/analysis.json`、`outputs/layerwise_a3/analysis.md`），不改变模型或命令默认配置。
 
+**B 同构代理与 §4h 偏差诊断（2026-08-20/21，终局补全）**：B sim_v1->sim_v2（同物理族
+受控 sim-to-real 代理，v1=legacy 标量动力学源域，k=all 扩至 10 seeds）test
+Δ=−0.0096 CI[−0.0367,+0.0175] 跨 0（7/10 seed 正向）、val Δ=−0.0229
+CI[−0.0472,+0.0014] 上界贴零--方向改善但未确认正迁移；k=3 Δ=+0.0351 跨 0。§4h
+偏差方向诊断（四臂 k=3，HI 真值三分箱）给出 IGBT late 箱 source−random
+Δmean_bias=+0.1083 CI[+0.0365,+0.1801]（5/5 seed）的机制证据（源先验在晚期退化
+阶段系统性高估 RUL），但 MOSFET/Multi 同箱 CI 跨 0，不泛化为全局机制。**迁移探索
+已冻结（父仓方案文档 §4g 终局）**：五重封口 = 全监督 CI 跨 0 + k=3 显著负 + A1
+剂量控制无效 + A3 无源层候选 + B 同构代理 test 跨 0；分级承认口径与重开条件
+（真实 GaN RFALT/真实遥测）见父仓 `transfer_clear_review_and_positive_gain_plan.md`
+§4g。RC 收口冻结交付口径：`results/public_summary.json` +
+`results/reference/transfer_boundary_summary.md`。
+
 **历史 A1 端点证据（已由 A3 清零重审与最终口径取代）**：以下保留早期 A1 endpoint 的
 冻结数字及其当时判读，供追溯 P0 修复后的实验事实；它们不是本组件当前权威结论，也不能与
 A3 的 validation-only 选层结果并列为两条现役结论。当前唯一现役结论为上文 A3：
