@@ -578,8 +578,11 @@ def run_one_group(mode, seed, cfg, smoke=False, encoder_override=None,
             print(f"  [rul-scale] channel v2: factor=1.0, H={rul_scale_windows} "
                   f"(loader 已归一, 不二次除)")
         else:
-            rul_factor, rul_scale_windows = _resolve_rul_scale(
-                level, ch_cfg, tc)   # v1 legacy: factor=rul_max_norm
+            # channel v1 (legacy): rul_ch 为窗口数, 按 transfer.rul_max_norm(4088) 归一
+            # (不再调 _resolve_rul_scale — 那按 config policy 读, 若默认 config 指向 v1 h5
+            #  会拿到 factor=1.0 让未归一标签进模型; 此处直接按数据 schema 取服务上限)
+            rul_factor = float(tc["rul_max_norm"])
+            rul_scale_windows = rul_factor
     else:
         # 服务级 (cross_level_transfer / 旧 PA6): 尺度从 service_level 段读 (F1-A 拆出),
         # 回退 transfer.rul_max_norm 兼容 (飞轮/旧 config)
@@ -588,7 +591,10 @@ def run_one_group(mode, seed, cfg, smoke=False, encoder_override=None,
             rul_factor = float(svc["rul_scale_windows"])
             rul_scale_windows = rul_factor
         else:
-            rul_factor, rul_scale_windows = _resolve_rul_scale(level, cfg["channel_level"], tc)
+            # 飞轮 wheel config 无 channel_level 段: 用 .get 取默认 {} (_resolve_rul_scale
+            # 对非 channel 层级本不读它, 只是传参默认)
+            rul_factor, rul_scale_windows = _resolve_rul_scale(
+                level, cfg.get("channel_level", {}), tc)
     if rul_factor is None:
         rul_max_train = float(rulT[mask(tr)].max())     # 回退 (跨 seed 不可比, 仅兼容旧 config)
         rul_factor = rul_max_train

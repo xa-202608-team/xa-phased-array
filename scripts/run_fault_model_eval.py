@@ -43,10 +43,12 @@ class GRUModel(nn.Module):
 
 
 def build_windows(h5_path, traj_ids, n_sub=16, L=L_WIN, stride=STRIDE, rul_norm=None):
-    """从 h5 选择性构建滑窗。返回 (x, rul, event) numpy 数组。
+    """从 h5 选择性构建滑窗。返回 (x, rul, event, rul_norm) numpy 数组 / float。
 
     F1-A: rul_norm 默认从 h5 schema 读 — v2 用 H (rul_scale_windows) 除 rul_ch_windows,
     v1 用 transfer.rul_max_norm(4088) 除 rul_ch。显式传 rul_norm 可覆盖。
+    第 4 个返回值 rul_norm (float) 供 eval_rmse_phm 反归一用, 保证评估侧与
+    build_windows 用同一个 H, 禁止评估侧默认值漂移。
     """
     from src.transfer.channel_dataset import (
         read_channel_label_meta, CHANNEL_LABEL_SCHEMA_V2)
@@ -85,7 +87,7 @@ def build_windows(h5_path, traj_ids, n_sub=16, L=L_WIN, stride=STRIDE, rul_norm=
     x_arr = np.zeros((len(xs), L, 4), dtype=np.float32)
     for i, w in enumerate(xs):
         x_arr[i, :len(w)] = w
-    return x_arr, np.array(rs, dtype=np.float32), np.array(evs, dtype=bool)
+    return x_arr, np.array(rs, dtype=np.float32), np.array(evs, dtype=bool), float(rul_norm)
 
 
 def train_model(x_tr, r_tr, ev_tr, x_va, r_va, ev_va):
@@ -125,8 +127,12 @@ def train_model(x_tr, r_tr, ev_tr, x_va, r_va, ev_va):
     return model
 
 
-def eval_rmse_phm(model, x, rul, event, rul_norm=4088.0):
-    """计算 RMSE (仅失效) + PHM Score + MAE + 删失违反率。"""
+def eval_rmse_phm(model, x, rul, event, rul_norm):
+    """计算 RMSE (仅失效) + PHM Score + MAE + 删失违反率。
+
+    rul_norm 为必填: 与 build_windows 返回的归一因子一致 (v2=H, v1=4088),
+    用于把归一化预测/标签反归一回绝对窗口数后算 RMSE/PHM。
+    """
     if not event.any():
         return dict(rmse=float("nan"), mae=float("nan"), phm=float("nan"), n_fail=0, n_cens=0)
     model.eval()
@@ -160,8 +166,8 @@ def main():
     torch.manual_seed(42)
 
     print("=== 加载标称数据 ===")
-    x_tr, r_tr, ev_tr = build_windows(NOMINAL_H5, TRAIN_IDS)
-    x_va, r_va, ev_va = build_windows(NOMINAL_H5, list(range(30, 50)))  # val
+    x_tr, r_tr, ev_tr, _rn_tr = build_windows(NOMINAL_H5, TRAIN_IDS)
+    x_va, r_va, ev_va, _rn_va = build_windows(NOMINAL_H5, list(range(30, 50)))  # val
     print(f"  train: {len(x_tr)} 窗 (失效 {ev_tr.sum()})")
     print(f"  val:   {len(x_va)} 窗 (失效 {ev_va.sum()})")
 
@@ -169,8 +175,8 @@ def main():
     model = train_model(x_tr, r_tr, ev_tr, x_va, r_va, ev_va)
 
     print("\n=== 评估标称 test (traj 70-84) ===")
-    x_nom, r_nom, ev_nom = build_windows(NOMINAL_H5, EVAL_IDS)
-    m_nom = eval_rmse_phm(model, x_nom, r_nom, ev_nom)
+    x_nom, r_nom, ev_nom, rn_nom = build_windows(NOMINAL_H5, EVAL_IDS)
+    m_nom = eval_rmse_phm(model, x_nom, r_nom, ev_nom, rn_nom)
     print(f"  RMSE={m_nom['rmse']:.4f} MAE={m_nom['mae']:.4f} PHM={m_nom['phm']:.2f} "
           f"失效={m_nom['n_fail']} 删失={m_nom['n_cens']} 违反率={m_nom['censor_violation']:.3f}")
 
@@ -180,8 +186,8 @@ def main():
         if not h5_path.exists():
             print(f"  [跳过] {ft}")
             continue
-        x_f, r_f, ev_f = build_windows(h5_path, list(range(15)))  # 故障 h5 中是 traj_000~014
-        m_f = eval_rmse_phm(model, x_f, r_f, ev_f)
+        x_f, r_f, ev_f, rn_f = build_windows(h5_path, list(range(15)))  # 故障 h5 中是 traj_000~014
+        m_f = eval_rmse_phm(model, x_f, r_f, ev_f, rn_f)
         ratio = m_f["rmse"] / m_nom["rmse"] if m_nom["rmse"] > 0 else float("nan")
         print(f"  {ft:14s}: RMSE={m_f['rmse']:.4f} (×{ratio:.2f}) MAE={m_f['mae']:.4f} "
               f"PHM={m_f['phm']:.2f} 违反率={m_f['censor_violation']:.3f}")

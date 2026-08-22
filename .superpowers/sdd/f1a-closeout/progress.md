@@ -18,4 +18,16 @@ Task 8: in_progress (BASE cc8f214) — 测试更新 + HDF5 fixture
   - concern 1: 生产 NameError _CHANNEL_META_REQUIRED 未定义 — controller 核实并修复 (cc8f214 之后工作区, 改为 _CHANNEL_META_V2_REQUIRED); 41 passed
   - concern 2: 5 个 baselines e2e 失败 = 本地大数据 h5 混合态 (顶层 v2 attrs / 子组旧 rul_ch), 需任务9 重建数据, 非测试缺陷
   - controller 顺手: scripts/plot_trajectory.py(服务级旧脚本) 也统一到 factory
-  - task reviewer 已派发
+  - task reviewer: Approved (spec 8.1-8.4 全达标, 质量通过), 3 Minor 不入 loop
+  - committed 1d97251
+  - minor (deferred to 终审/任务9): ①baselines v2 值域断言 np.any(rul>1) 边界理论误报(真数据不会); ②baselines v2 分支断言待任务9真实数据实际走到; ③test_channel_hi loader 测试可加 len(rul)==2*T 显式断言
+Task 8: complete (commits cc8f214..1d97251, review clean, 3 minor deferred)
+Task 9: complete (commits 1d97251..dcf6460)
+  - 重建前 10 failed(混合态h5 KeyError)/361 passed/6 skipped; 重建 v2 channel_features.h5
+    (200 traj×16=3200 通道, ~30s) 后全套 **371 passed / 0 failed / 6 skipped** (925s)
+  - 字段断言全过: v2 attrs 正确; 3200 子组双字段 allclose; 旧 rul_ch 数=0; loader 一致
+  - 改动 tests/test_channel_hi.py 两处存量直读 rul_ch -> rul_ch_norm (brief 允许 b 类)
+  - concern(不属F1-A): median EOL_ch>EOL_svc 是跨轨迹 median 误口径(M2 已记正确=逐轨迹 Δ_first)
+  - 9.4 smoke 通过 (factor=1.0, H=11688 日志, RMSE 正数)
+终审(final review, opus) 已派发, merge-base c7b7a8e..HEAD (4 commits: f5e1df0/cc8f214/1d97251/dcf6460)
+
