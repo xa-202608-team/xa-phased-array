@@ -91,5 +91,22 @@ F1-A 完成: 5 commits on feature/f1a-closeout-rul-v2 (merge-base c7b7a8e)
 - 验证: stage --clean 20 文件全 sha 对; scan_handoff_payload 0 violations;
   handoff 测试子集 20 passed。staging 残留教训: stage 必须配 --clean (旧 v0.2.0 拷贝会滞留)。
 
+## F4 敏感性 OAT + PA6 三消融 (2026-08-23, 本 commit)
+- 预注册先于执行 (eb63718): docs/f4_sensitivity_ablation_design.md — OAT 5参数×±20% +
+  B1 full-vs-simplified AF + B2 计数vs连续 + B3 三档遥测; 变体数据全在 outputs/f4_* 不触冻结基线。
+- A (10 变体 sim×200traj 3并发 + HI + 测量): 结论稳健 (失效率带 0.53-0.64, EOL 变化≤±12%);
+  Ea 唯一显著敏感 (物理预期); **ΔT_ref 精确不变=结构不变性** (剂量尺度被 life_ref 归一吸收,
+  life_scale_years 79589/40750/23582 证明参数生效, 非死旋钮); margin0 自洽 (EOL_ch 严格不变)。
+- B1 (事后, 基线 sim): 简化公式 median +475 窗系统性偏晚, ρ=0.996 排序保真, 漏检 3.3%,
+  本数据 SLL/θ 无先导绑定 (0%) — 能力差异未触发, 如实报告。
+- B2: 计数特征 0.3152±0.0106 (+0.160, 2×恶化) — 连续幅相承载预后信息主体。
+- B3: subagg 0.1656±0.0043 (+0.011 温和) / sparse 1/6 0.1245±0.0074 (−0.031 反优,
+  长上下文>数据量, 协议耦合已注明; cadence 预算 6× 冗余)。
+- 执行事故: build_channel_hi 参数为 --in 非 --indir (首轮 10 变体 HI 全败, sim 已在盘修复后
+  秒级补齐); run_groups 变体产物名随 config stem (all_metrics_config.json); 0xC0000409
+  收尾期退出码以产物哨兵判定 — 三处均改脚本并复跑验证。
+- 产物: docs/results_phased_array_f4.md + outputs/f4_oat/oat_results.json +
+  outputs/f4_ablation/{b2_count,b3_subagg,b3_sparse}/。
+
 
 
