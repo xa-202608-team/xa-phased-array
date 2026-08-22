@@ -375,12 +375,11 @@ def run(args):
     loader_S = DataLoader(ds_S, batch_size=bs, shuffle=True)
 
     device = "cuda" if (cfg["pretrain"]["device"] == "cuda" and torch.cuda.is_available()) else "cpu"
-    model = TransferModel(
-        encoder_type=cfg["model"]["encoder"], n_features=featsS.shape[1], n_target=xT.shape[1],
-        input_len=L, channels=mc["tcn"]["channels"], kernel_size=mc["tcn"]["kernel_size"],
-        num_blocks=mc["tcn"]["num_blocks"], dropout=mc["tcn"]["dropout"],
-        latent_dim=mc["latent_dim"], adapter_hidden=tcfg["adapter_hidden"],
-    ).to(device)
+    # F1-A: 复用唯一构造函数 (与 run_groups/run_service_eval/导出/推理同架构, 防漂移)
+    from src.models.factory import build_transfer_model
+    model = build_transfer_model(
+        cfg, n_features=featsS.shape[1], n_target=xT.shape[1],
+        encoder_type=cfg["model"]["encoder"], device=device)
 
     # ---- S1: 加载源域预训练编码器 ----
     comp = Path(args.config).stem

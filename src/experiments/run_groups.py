@@ -43,7 +43,8 @@ from src.transfer.train_transfer import (                                      #
     load_target, load_source)
 from src.transfer.channel_dataset import (                                     # noqa: E402  (T6.3 channel level)
     ChannelSeqDataset, load_target_channel, apply_kshot_mask,
-    sample_kshot_trajectories, assert_split_by_trajectory)
+    sample_kshot_trajectories, assert_split_by_trajectory,
+    read_channel_label_meta, CHANNEL_LABEL_SCHEMA_V2)
 from src.train.pretrain import _rul_loss                                       # noqa: E402  (P0-2 失效/删失分流)
 from src.baselines.physical_extrap import evaluate_physical, phm_score, mae as mae_fn   # noqa: E402
 from src.baselines.phased_array_baselines import evaluate_phased_array_baselines        # noqa: E402
@@ -504,6 +505,10 @@ def run_one_group(mode, seed, cfg, smoke=False, encoder_override=None,
         target_h5 = ROOT / ch_cfg["feature_path"]
         if not target_h5.exists():
             raise FileNotFoundError(f"channel level 缺 {target_h5}; 先 build_channel_hi")
+        # F1-A: H 由 h5 attrs 唯一提供 (build_channel_hi 是唯一计算者); 不重算, config 漂移即 fail
+        import h5py
+        with h5py.File(target_h5, "r") as _fh:
+            ch_meta = read_channel_label_meta(_fh)
         xT, hiT, rulT, ckT, tidT, evT, lbT, n_traj, sidT = load_target_channel(
             target_h5, drop_features=tc.get("ablation_drop_features"))
         canonical_path = cfg["pretrain"].get(
@@ -562,17 +567,32 @@ def run_one_group(mode, seed, cfg, smoke=False, encoder_override=None,
         return np.isin(tidT, ids)
 
     # P1-2: RUL 归一因子用 config 固定物理上限 (跨 seed 可比); 缺失回退 train-only max
-    # F1 收口: channel + mission_horizon → 数据已由 build_channel_hi 除以全局 H (v2),
-    # 这里 factor=1.0 不再二次除 transfer.rul_max_norm(4088), 避免双重重归一。服务级沿用旧上限。
-    rul_factor, rul_scale_windows = _resolve_rul_scale(
-        level, (locals().get("ch_cfg") or cfg["channel_level"]), tc)
+    # F1-A: channel v2 → loader 已读 rul_ch_norm (=窗口数/H, 由 h5 元数据锁定尺度),
+    #   factor=1.0 不二次除, H 从 ch_meta 取 (build_channel_hi 唯一计算者, 不重算);
+    # channel v1 (legacy) → rul_ch 为窗口数, factor=rul_max_norm;
+    # service (旧服务级) → factor=rul_max_norm。
+    if level == "channel":
+        if ch_meta["channel_label_schema"] == CHANNEL_LABEL_SCHEMA_V2:
+            rul_factor = 1.0
+            rul_scale_windows = ch_meta["rul_scale_windows"]
+            print(f"  [rul-scale] channel v2: factor=1.0, H={rul_scale_windows} "
+                  f"(loader 已归一, 不二次除)")
+        else:
+            rul_factor, rul_scale_windows = _resolve_rul_scale(
+                level, ch_cfg, tc)   # v1 legacy: factor=rul_max_norm
+    else:
+        # 服务级 (cross_level_transfer / 旧 PA6): 尺度从 service_level 段读 (F1-A 拆出),
+        # 回退 transfer.rul_max_norm 兼容 (飞轮/旧 config)
+        svc = cfg.get("service_level", {})
+        if "rul_scale_windows" in svc:
+            rul_factor = float(svc["rul_scale_windows"])
+            rul_scale_windows = rul_factor
+        else:
+            rul_factor, rul_scale_windows = _resolve_rul_scale(level, cfg["channel_level"], tc)
     if rul_factor is None:
         rul_max_train = float(rulT[mask(tr)].max())     # 回退 (跨 seed 不可比, 仅兼容旧 config)
         rul_factor = rul_max_train
         print(f"  [warning] 无 rul 尺度策略, 回退 train-only max={rul_max_train:.1f}")
-    else:
-        print(f"  [rul-scale] level={level} factor={rul_factor}"
-              f"{(' (H=' + str(rul_scale_windows) + ' v2 已归一)') if level == 'channel' and rul_factor == 1.0 else ''}")
     rulT = rulT / max(rul_factor, 1.0)
     lbT = lbT / max(rul_factor, 1.0)
 

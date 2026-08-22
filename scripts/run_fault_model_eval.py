@@ -42,10 +42,29 @@ class GRUModel(nn.Module):
         return self.head(h[-1]).squeeze(-1)
 
 
-def build_windows(h5_path, traj_ids, n_sub=16, L=L_WIN, stride=STRIDE, rul_norm=4088.0):
-    """从 h5 选择性构建滑窗。返回 (x, rul, event) numpy 数组。"""
+def build_windows(h5_path, traj_ids, n_sub=16, L=L_WIN, stride=STRIDE, rul_norm=None):
+    """从 h5 选择性构建滑窗。返回 (x, rul, event) numpy 数组。
+
+    F1-A: rul_norm 默认从 h5 schema 读 — v2 用 H (rul_scale_windows) 除 rul_ch_windows,
+    v1 用 transfer.rul_max_norm(4088) 除 rul_ch。显式传 rul_norm 可覆盖。
+    """
+    from src.transfer.channel_dataset import (
+        read_channel_label_meta, CHANNEL_LABEL_SCHEMA_V2)
     xs, rs, evs = [], [], []
     with h5py.File(h5_path, "r") as f:
+        if rul_norm is None:
+            meta = read_channel_label_meta(f)
+            if meta["channel_label_schema"] == CHANNEL_LABEL_SCHEMA_V2:
+                rul_norm = float(meta["rul_scale_windows"])
+                rul_field = "rul_ch_windows"
+            else:
+                rul_norm = 4088.0
+                rul_field = "rul_ch"
+        else:
+            meta = read_channel_label_meta(f)
+            rul_field = ("rul_ch_windows"
+                         if meta["channel_label_schema"] == CHANNEL_LABEL_SCHEMA_V2
+                         else "rul_ch")
         for ti in traj_ids:
             for si in range(n_sub):
                 key = f"traj_{ti:03d}/sub_{si:02d}" if f"traj_{ti:03d}" in f else None
@@ -53,7 +72,7 @@ def build_windows(h5_path, traj_ids, n_sub=16, L=L_WIN, stride=STRIDE, rul_norm=
                     continue
                 g = f[key]
                 x_ch = g["x_ch"][:]
-                rul = g["rul_ch"][:] / rul_norm
+                rul = g[rul_field][:] / rul_norm
                 event = bool(g.attrs.get("event_observed", 0))
                 T = len(x_ch)
                 for s in range(0, max(1, T - L + 1), stride):

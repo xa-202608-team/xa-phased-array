@@ -29,7 +29,7 @@ import torch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from src.utils import load_config, set_seed                                  # noqa: E402
-from src.transfer.adapter import TransferModel                               # noqa: E402
+from src.models.factory import build_transfer_model                          # noqa: E402
 from src.transfer.train_transfer import split_trajectories                   # noqa: E402
 from src.physics.service_rollout import ArrayTwin, rollout_mc                # noqa: E402
 
@@ -39,13 +39,9 @@ COL_DUTY = 2      # 第 2 维 = duty
 
 
 def _build_model(cfg, n_features, device):
-    mc = cfg["model"]
-    tc = cfg["transfer"]
-    return TransferModel(
-        encoder_type=mc["encoder"], n_features=n_features, n_target=n_features,
-        channels=mc["tcn"]["channels"], kernel_size=mc["tcn"]["kernel_size"],
-        num_blocks=mc["tcn"]["num_blocks"], dropout=mc["tcn"]["dropout"],
-        latent_dim=mc["latent_dim"], adapter_hidden=tc["adapter_hidden"]).to(device)
+    # F1-A: 复用唯一构造函数 (与 run_groups/导出/推理同架构, 防漂移)
+    return build_transfer_model(cfg, n_features=n_features, n_target=n_features,
+                                encoder_type=cfg["model"]["encoder"], device=device)
 
 
 def _arrhenius_dose(Tj_K: np.ndarray, duty: np.ndarray, Ea_eV: float) -> np.ndarray:
@@ -118,19 +114,29 @@ def evaluate_service_level(cfg: dict, ckpt_path: Path, seed: int,
         print(f"!! 缺 ckpt {ckpt_path}; 用随机权重 (T8 评估无意义, 仅管线验证)", flush=True)
 
     # target_only 微调 (在 IID train 上, 复用 T9 模式; pretrain 零样本 rate 估不准)
-    from src.transfer.channel_dataset import load_target_channel, ChannelSeqDataset
+    from src.transfer.channel_dataset import (
+        load_target_channel, ChannelSeqDataset,
+        read_channel_label_meta, CHANNEL_LABEL_SCHEMA_V2)
     from src.experiments.run_groups import _train_with_early_stop
     from torch.utils.data import DataLoader
     import torch.nn as nn
+    # F1-A: v2 loader 已归一到 H, factor=1.0; v1 用 rul_max_norm
+    with h5py.File(target_h5, "r") as _f:
+        ch_meta = read_channel_label_meta(_f)
     xT, hiT, rulT, ckT, tidT, evT, lbT, n_traj, sidT = load_target_channel(target_h5)
     tr, va, te = split_trajectories(
         n_traj, [tc["split"]["train"], tc["split"]["val"], tc["split"]["test"]], seed)
     _fm = xT[np.isin(tidT, tr)].mean(axis=0)
     _fs = xT[np.isin(tidT, tr)].std(axis=0) + 1e-6
     xT_norm = (xT - _fm) / _fs
-    rul_max = float(tc["rul_max_norm"])
-    rulT_norm = rulT / rul_max
-    lbT_norm = lbT / rul_max
+    if ch_meta["channel_label_schema"] == CHANNEL_LABEL_SCHEMA_V2:
+        rul_factor = 1.0
+        rul_max = float(ch_meta["rul_scale_windows"])
+    else:
+        rul_max = float(tc["rul_max_norm"])
+        rul_factor = rul_max
+    rulT_norm = rulT / rul_factor
+    lbT_norm = lbT / rul_factor
     K = int(cfg.get("pretrain", {}).get("seq_block_K", 8))
     tstride = int(tc.get("target_stride", 50))
     def mkDS(ids):

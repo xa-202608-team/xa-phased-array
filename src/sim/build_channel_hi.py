@@ -91,14 +91,16 @@ def build_channel_labels_v2(f_sub_s: np.ndarray, params: dict, deltas: dict,
     """通道级标签 v2（F1 收口口径）。
 
     与 v1 的差异（GPT 评审逐条裁定）:
-      - 失效通道: rul = (EOL − t) / H，不按 cap_ratio*T 截顶（0.35 是人为任务定义,
+      - 失效通道: rul = (EOL − t)，不按 cap_ratio*T 截顶（0.35 是人为任务定义,
         截顶会使早期样本成平台、削弱真实提前量学习）；
-      - 删失通道: rul = (T−1−t) / H（观测终点下界），分母是全局任务视界 H 而非观测终点 T；
-      - 统一除以任务级物理视界 H（mission_horizon），支持绝对窗口/小时还原与跨 seed 可比。
+      - 删失通道: rul = (T−1−t)（观测终点下界，窗口数）；
+      - 标签以**绝对窗口数**返回 (rul_windows)，调用方/写盘时再除以任务视界 H 得
+        rul_norm = rul_windows / H。H 是模型数值单位 (F1-A §9 例外), 非物理寿命分母。
     其余 (z/hi/event/eol/keep, EOL 截断 P0-1 铁律) 与 v1 保持一致。
 
-    返回 (z, hi, rul, event, eol, keep)，rul 为归一化相对量 ([0,1)，H 归一)。调用方
-    通过 `rul_scale_windows=H` 还原绝对窗口数。
+    返回 (z, hi, rul_windows, event, eol, keep)，rul 为绝对窗口数 (float)。写盘时
+    同时存 rul_ch_windows (原值) 与 rul_ch_norm (/H)，消费者按用途读对应字段，
+    不再原地改变单一字段语义 (F1-A 修正门, 根除双归一)。
     """
     del cap_ratio  # v2 显式不截顶；参数保留占位以防调用方混淆
     Delta_R = float(params["Delta_R"])
@@ -114,12 +116,12 @@ def build_channel_labels_v2(f_sub_s: np.ndarray, params: dict, deltas: dict,
     t = np.arange(T)
     if event:
         eol = int(np.argmax(z >= 1.0))
-        rul = (eol - t).astype(float) / H
+        rul = (eol - t).astype(float)
         rul[eol:] = 0.0
         keep = eol + 1
     else:
         eol = T - 1
-        rul = (T - 1 - t).astype(float) / H
+        rul = (T - 1 - t).astype(float)
         keep = T
     return z.astype(np.float32), hi.astype(np.float32), rul[:keep].astype(np.float32), \
         event, eol, keep
@@ -242,7 +244,15 @@ def main():
                 sub_grp.create_dataset("x_ch", data=x_ch)
                 sub_grp.create_dataset("hi_ch", data=hi[:keep])
                 sub_grp.create_dataset("z_ch", data=z[:keep])
-                sub_grp.create_dataset("rul_ch", data=rul)
+                if use_v2:
+                    # F1-A: 双字段 — rul_ch_windows 绝对窗口数 (物理解释/推理还原),
+                    # rul_ch_norm = /H (模型标签)。不写旧 rul_ch, 让遗留消费者 KeyError
+                    # 而非静默双归一。
+                    sub_grp.create_dataset("rul_ch_windows", data=rul)
+                    sub_grp.create_dataset(
+                        "rul_ch_norm", data=(rul / float(H_windows)).astype(np.float32))
+                else:
+                    sub_grp.create_dataset("rul_ch", data=rul)
                 sub_grp.attrs["event_observed"] = int(event)
                 sub_grp.attrs["eol_idx"] = eol
                 sub_grp.attrs["traj_id"] = traj_id

@@ -52,11 +52,20 @@ def _load_channels(h5_path: Path) -> list[dict]:
     """读 channel_features.h5 → list of dict (每子阵一个通道记录)。
 
     每条记录:
-      x_ch (T,4), hi_ch (T,), z_ch (T,), rul_ch (T,),
+      x_ch (T,4), hi_ch (T,), z_ch (T,), rul_ch (T,) 单位为**绝对窗口数**,
       event, eol_idx, traj_id, sub_id, traj_attrs (轨迹级物理参数)
+
+    F1-A: 按 h5 schema 读字段 — v2 (channel_label_v2) 读 rul_ch_windows (不归一),
+    v1 (legacy) 读 rul_ch (已 cap 的窗口数)。调用方按 rul_max (H 或 4088) 自行归一,
+    杜绝把 rul_ch_norm 再除一次 4088 的双归一。
     """
+    from src.transfer.channel_dataset import (
+        read_channel_label_meta, CHANNEL_LABEL_SCHEMA_V2)
     channels: list[dict] = []
     with h5py.File(h5_path, "r") as f:
+        meta = read_channel_label_meta(f)
+        rul_field = ("rul_ch_windows" if meta["channel_label_schema"] == CHANNEL_LABEL_SCHEMA_V2
+                     else "rul_ch")
         for key in sorted(f.keys()):
             traj = f[key]
             attrs = {k: (float(v) if np.isscalar(v) else np.asarray(v))
@@ -67,7 +76,7 @@ def _load_channels(h5_path: Path) -> list[dict]:
                     x_ch=sub["x_ch"][:].astype(float),
                     hi_ch=sub["hi_ch"][:].astype(float),
                     z_ch=sub["z_ch"][:].astype(float),
-                    rul_ch=sub["rul_ch"][:].astype(float),
+                    rul_ch=sub[rul_field][:].astype(float),
                     event=bool(int(sub.attrs["event_observed"])),
                     eol_idx=int(sub.attrs["eol_idx"]),
                     traj_id=int(sub.attrs["traj_id"]),
@@ -307,7 +316,8 @@ def _evaluate_split(true_norm: np.ndarray, pred_norm: np.ndarray,
 def evaluate_channel_baselines(cfg: dict, seed: int, verbose: bool = True) -> dict | None:
     """跑 5 个基线, 返回各基线指标字典 + 协议字段。
 
-    划分与 run_groups 完全一致 (按 traj_id), rul 按 transfer.rul_max_norm 归一,
+    划分与 run_groups 完全一致 (按 traj_id), rul 按 h5 尺度元数据归一:
+    v2 → H (rul_scale_windows, 任务视界, 与模型标签同口径); v1 → transfer.rul_max_norm。
     评估仅 test 失效通道算 RMSE/PHM/MAE, 删失通道报下界违反率。
     """
     set_seed(seed, cfg["reproducibility"]["deterministic"])
@@ -317,7 +327,15 @@ def evaluate_channel_baselines(cfg: dict, seed: int, verbose: bool = True) -> di
     if not target_h5.exists():
         print(f"!! 缺 {target_h5}; 先 python -m src.sim.build_channel_hi --report")
         return None
-    rul_max = float(tcfg["rul_max_norm"])
+    # F1-A: rul_max 从 h5 元数据读 (build_channel_hi 唯一计算者), 不再写死 4088
+    from src.transfer.channel_dataset import (
+        read_channel_label_meta, CHANNEL_LABEL_SCHEMA_V2)
+    with h5py.File(target_h5, "r") as _f:
+        _meta = read_channel_label_meta(_f)
+    if _meta["channel_label_schema"] == CHANNEL_LABEL_SCHEMA_V2:
+        rul_max = float(_meta["rul_scale_windows"])
+    else:
+        rul_max = float(tcfg["rul_max_norm"])
     Ea_eV = float(np.mean(cfg["sim"]["physics"]["Ea_eV_range"]))
     ratios = [tcfg["split"]["train"], tcfg["split"]["val"], tcfg["split"]["test"]]
 

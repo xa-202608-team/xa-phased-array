@@ -65,8 +65,20 @@ def load_and_prepare(cfg, seed):
     ch_cfg = cfg["channel_level"]
     L = int(mc["input_len_L"])
     K = int(cfg.get("pretrain", {}).get("seq_block_K", 8))
-    rul_max = float(tc.get("rul_max_norm", 1.0))
     h5_path = ROOT / ch_cfg["feature_path"]
+
+    # F1-A: v2 loader 已返回 rul_ch_norm (窗口数/H); v1 返回窗口数需再除 rul_max_norm
+    import h5py
+    from src.transfer.channel_dataset import (
+        read_channel_label_meta, CHANNEL_LABEL_SCHEMA_V2)
+    with h5py.File(h5_path, "r") as _f:
+        ch_meta = read_channel_label_meta(_f)
+    if ch_meta["channel_label_schema"] == CHANNEL_LABEL_SCHEMA_V2:
+        rul_max = float(ch_meta["rul_scale_windows"])
+        rul_factor = 1.0   # loader 已归一
+    else:
+        rul_max = float(tc.get("rul_max_norm", 1.0))
+        rul_factor = rul_max
 
     xT, hiT, rulT, ckT, tidT, evT, lbT, n_traj, sidT = load_target_channel(h5_path)
     tr, va, te = split_trajectories(n_traj, [tc["split"]["train"],
@@ -78,8 +90,8 @@ def load_and_prepare(cfg, seed):
     _fm = xT[_tr_mask].mean(axis=0)
     _fs = xT[_tr_mask].std(axis=0) + 1e-6
     xT = (xT - _fm) / _fs
-    # RUL 归一
-    rulT = rulT / max(rul_max, 1.0)
+    # RUL 归一 (v2 factor=1.0 不二次除; v1 除 rul_max_norm)
+    rulT = rulT / max(rul_factor, 1.0)
     lbT = rulT.copy()
     damageT = np.zeros_like(rulT)   # 通道级无 damage_norm
 
@@ -91,14 +103,10 @@ def load_and_prepare(cfg, seed):
 
 # ===================================================================== 模型
 def build_model(cfg, n_target, device, encoder="gru"):
-    mc = cfg["model"]
-    tc = cfg["transfer"]
-    # 通道级: source 4 维 canonical → encoder, target 4 维 x_ch → adapter
-    return TransferModel(
-        encoder_type=encoder, n_features=4, n_target=n_target,
-        channels=mc["tcn"]["channels"], kernel_size=mc["tcn"]["kernel_size"],
-        num_blocks=mc["tcn"]["num_blocks"], dropout=mc["tcn"]["dropout"],
-        latent_dim=mc["latent_dim"], adapter_hidden=tc["adapter_hidden"]).to(device)
+    # F1-A: 复用唯一构造函数 (与训练/评估/导出/推理同架构, 防漂移)
+    from src.models.factory import build_transfer_model
+    return build_transfer_model(cfg, n_features=4, n_target=n_target,
+                                encoder_type=encoder, device=device)
 
 
 def _train_epoch(model, loader, opt, device, huber, mse, lam):
@@ -235,9 +243,18 @@ def predict_channel(model, x_ch, hi_ch, rul_ch, ev_ch, lb_ch, dmg_ch, L, K, devi
 
 # ===================================================================== h5 辅助
 def read_traj_channel_raw(h5_path, traj_id):
-    """从 h5 读一条轨迹的全部 16 子阵原始数据 (未归一)。"""
+    """从 h5 读一条轨迹的全部 16 子阵原始数据 (未归一)。
+
+    F1-A: v2 读 rul_ch_windows (绝对窗口数, 绘图物理解释用); v1 读 rul_ch。
+    """
+    from src.transfer.channel_dataset import (
+        read_channel_label_meta, CHANNEL_LABEL_SCHEMA_V2)
     subs = {}
     with h5py.File(h5_path, "r") as f:
+        meta = read_channel_label_meta(f)
+        rul_field = ("rul_ch_windows"
+                     if meta["channel_label_schema"] == CHANNEL_LABEL_SCHEMA_V2
+                     else "rul_ch")
         key = f"traj_{traj_id:03d}"
         if key not in f:
             return None
@@ -248,7 +265,7 @@ def read_traj_channel_raw(h5_path, traj_id):
             subs[sid] = dict(
                 x=sub["x_ch"][:].astype(np.float32),
                 hi=sub["hi_ch"][:].astype(np.float32),
-                rul=sub["rul_ch"][:].astype(np.float32),
+                rul=sub[rul_field][:].astype(np.float32),
                 event=bool(sub.attrs["event_observed"]),
                 T=sub["x_ch"].shape[0],
             )

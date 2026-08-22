@@ -108,6 +108,10 @@ model:
     kernel_size: 5
     num_blocks: 4
     dropout: 0.1
+  gru:                                  # F1-A: GRU 架构参数显式化 (factory 唯一构造, 防漂移)
+    hidden: 64
+    num_layers: 2
+    dropout: 0.1
   latent_dim: 64
   array_aggregator: attention            # 通道 HI -> 阵列系统性能聚合 (PA4)
 
@@ -200,11 +204,16 @@ channel_level:
     P_out: 0.20                # 功率漂移阈值 (canonical x_ch 第0维 δ_P, ≈1dB)
   delta_source_R_DS: 0.05      # 源域 Si MOSFET (NASA Celaya 判据)
   # F1 收口 (GPT 评审逐条裁定): channel_label_v2 统一任务视界归一, 不截顶, 不 per-轨迹 EOL 归一
-  rul_scale_policy: mission_horizon   # mission_horizon=除以全局 H(~11688 窗) | legacy_cap=旧 v1 (弃用, 仅兼容)
-  early_observation_fraction: 0.30    # 早期观测研究独立字段 (不参与标签构造; 旧 rul_cap_ratio 不再复用作此含义)
-  rul_cap_ratio: 0.35                 # [legacy v1 弃用] 旧通道标签封顶比例, 仅 legacy_cap 策略使用; v2 不用
+  rul_scale_policy: mission_horizon   # mission_horizon=除以全局 H(~11688 窗, h5 元数据锁定) | legacy_cap=旧 v1 (弃用, 仅兼容)
   calibration_seed: 1234       # 标定专用 seed, 与实验 seed 严格隔离
   feature_path: data/features/phased_array/schema_ch_v1/target/channel_features.h5
+
+# ---------- 服务级 (旧 PA6 / cross_level_transfer 层级消融) ----------
+# F1-A: 服务级尺度单独拆出 (不再与通道级共用 transfer.rul_max_norm)。服务级标签为
+# 12 维 target_features 的窗口数 RUL, 归一到固定跨 seed 物理上限 4088 窗 (= cap_ratio×视界)。
+service_level:
+  rul_scale_windows: 4088
+  rul_label_schema: service_label_v1
 
 # ---------- 对比实验 (PA6; 方案 §8 八组 + 三类消融) ----------
 experiments:
