@@ -68,7 +68,7 @@ def test_failed_channel_truncated_to_eol():
         for _key, sub_key, sub in _iter_subs(f, n_traj=10):
             if bool(sub.attrs["event_observed"]):
                 seen = True
-                rul = sub["rul_ch"][:]
+                rul = sub["rul_ch_norm"][:]   # v2: rul_ch 已拆为 rul_ch_windows+rul_ch_norm
                 assert abs(rul[-1]) < 1e-6, f"{_key}/{sub_key} 失效通道末端 rul 应=0, 实={rul[-1]}"
     assert seen, "应至少一个失效通道"
 
@@ -90,7 +90,7 @@ def test_censored_rul_capped():
         for _key, sub_key, sub in _iter_subs(f, n_traj=10):
             if not bool(sub.attrs["event_observed"]):
                 seen = True
-                rul = sub["rul_ch"][:]
+                rul = sub["rul_ch_norm"][:]   # v2: 模型标签已归一 (/H)
                 T = len(rul)
                 expect_max = (T - 1.0) / H
                 assert rul.max() <= expect_max + 1e-6, \
