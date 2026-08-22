@@ -60,7 +60,7 @@ def read_channel_label_meta(h5: "h5py.File") -> dict:
         raise ValueError(f"未知 channel_label_schema={schema!r}; 期望 v1/v2")
     meta = {"channel_label_schema": schema}
     if schema == CHANNEL_LABEL_SCHEMA_V2:
-        for k in _CHANNEL_META_REQUIRED:
+        for k in _CHANNEL_META_V2_REQUIRED:
             if k not in h5.attrs:
                 raise ValueError(f"v2 channel_features.h5 缺必填 attr {k!r}")
         H = float(h5.attrs["rul_scale_windows"])

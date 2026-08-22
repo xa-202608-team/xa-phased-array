@@ -1,9 +1,11 @@
 """模型唯一构造函数 factory (F1 收口)。
 
 run_groups/导出器/predict_gru 三处共用 build_transfer_model，消除 GRU hidden/layers/
-adapter/dropout 训练-导出-推理三处漂移。GRU 架构参数 (hidden=64/layers=2) 目前依赖
-adapter.TRANSFER 默认; factory 必须与 run_groups._build_model 完全同构。
+dropout 训练-导出-推理三处漂移。GRU 架构参数 (hidden=64/layers=2/dropout=0.1) 现从
+config.model.gru 显式读取 (F1-A: 不再吃 adapter 隐式默认); factory 必须与
+run_groups._build_model 完全同构 (后者唯一实现即本 factory)。
 """
+import copy
 import sys
 from pathlib import Path
 
@@ -38,13 +40,33 @@ def test_factory_builds_gru_main_model():
 
 
 def test_factory_gru_hidden_layers_match_adapter_default():
-    """GRU 必须用 adapter 默认 64/2 (与 run_groups._build_model 现状一致, 防漂移)。"""
+    """GRU 必须用 config.model.gru 默认 64/2 (当前 config 值恰等于 adapter 默认, 防漂移)。
+
+    注意: 该 64/2 现来自 config (factory 显式读取), 不再是 adapter 隐式默认 —
+    值相等只是当前 config 恰好 64/2。config 驱动性见 test_factory_reads_gru_from_config_deepcopy。
+    """
     cfg = _cfg()
     model = build_transfer_model(cfg, n_features=4, n_target=4, encoder_type="gru")
     gru = model.encoder.gru  # nn.GRU(4,64,2,batch_first=True)
-    assert gru.hidden_size == 64, "adapter 默认 GRU hidden=64"
-    assert gru.num_layers == 2, "adapter 默认 GRU layers=2"
+    assert gru.hidden_size == 64, "config.model.gru.hidden=64 (当前默认)"
+    assert gru.num_layers == 2, "config.model.gru.num_layers=2 (当前默认)"
     assert gru.input_size == 4, f"n_features 应=4, 实={gru.input_size}"
+
+
+def test_factory_reads_gru_from_config_deepcopy():
+    """factory 从 config.model.gru 显式读取 (非硬编码 64/2): 改 cfg 后模型跟着变。
+
+    用 copy.deepcopy 改 hidden=128/num_layers=1 再构建, 断言 encoder.gru 跟随 —
+    证明 factory 读 config 而非写死。deepcopy 避免污染本模块共享的 _cfg() 结果。
+    """
+    cfg = copy.deepcopy(_cfg())
+    cfg["model"]["gru"]["hidden"] = 128
+    cfg["model"]["gru"]["num_layers"] = 1
+    model = build_transfer_model(cfg, n_features=4, n_target=4, encoder_type="gru")
+    gru = model.encoder.gru
+    assert gru.hidden_size == 128, "factory 应从 config.model.gru.hidden 读取 (改 128 后应跟随)"
+    assert gru.num_layers == 1, "factory 应从 config.model.gru.num_layers 读取 (改 1 后应跟随)"
+    assert gru.input_size == 4
 
 
 def test_factory_roundtrip_weights_with_run_groups_model():

@@ -4,7 +4,8 @@
   - 5 个基线输出形状/语义正确 (constant/z_extrap/arrhenius/similarity/particle_filter)
   - 评估口径与 run_groups.eval_test 一致 (仅失效通道算 RMSE/PHM/MAE; 删失报下界违反率)
   - 划分按 traj_id (同 traj 16 子阵同 split)
-  - rul_max_norm 固定归一 (跨 seed 可比)
+  - rul_max_norm 固定归一: v2 数据从 h5 meta 读 H (rul_scale_windows=11688), v1 沿用
+    transfer.rul_max_norm (4088); 跨 seed 可比 (F1-A 双口径, 不再写死 4088)
   - DTW 距离 / 粒子滤波 边界行为
 """
 import sys
@@ -196,8 +197,8 @@ def _require_data():
 def _smoke_cfg(cfg):
     """缩小 test split 加速端到端测试 (test 集约 20-40 通道, similarity 不至于超时)。
 
-    评估口径与正式 run 完全一致 (同 traj_id 划分 + rul_max_norm 归一 + 仅失效 RMSE),
-    只是 test 集小; 数字本身不代表正式结果。
+    评估口径与正式 run 完全一致 (同 traj_id 划分 + rul_max_norm 归一 (v2=H 读 h5 meta,
+    v1=4088) + 仅失效 RMSE), 只是 test 集小; 数字本身不代表正式结果。
     """
     import copy
     cfg2 = copy.deepcopy(cfg)
@@ -216,6 +217,15 @@ def test_load_channels_structure():
     assert len(c0["x_ch"]) == len(c0["hi_ch"]) == len(c0["z_ch"]) == len(c0["rul_ch"])
     assert isinstance(c0["event"], bool)
     assert isinstance(c0["traj_id"], int) and isinstance(c0["sub_id"], int)
+    # F1-A: dict key 仍叫 rul_ch (兼容消费方), 但 v2 下内容为绝对窗口数 (读 rul_ch_windows,
+    # 未归一), 基线自行 /H — 断言值域是窗口数 (>1) 而非归一值, 防双归一回潮
+    from src.transfer.channel_dataset import (
+        read_channel_label_meta, CHANNEL_LABEL_SCHEMA_V2)
+    with h5py.File(feature_path, "r") as f:
+        _schema = read_channel_label_meta(f)["channel_label_schema"]
+    if _schema == CHANNEL_LABEL_SCHEMA_V2:
+        assert bool(np.any(c0["rul_ch"] > 1.0)), \
+            "v2 下 rul_ch key 应为绝对窗口数 (>1), 而非归一化值"
     # 至少有失效和删失各一
     assert any(c["event"] for c in chs) and not all(c["event"] for c in chs)
 
@@ -223,12 +233,21 @@ def test_load_channels_structure():
 def test_evaluate_channel_baselines_full():
     """端到端: 5 个基线都返回有效指标 (rmse/mae/phm/censor_violation_rate)。
     用 _smoke_cfg 缩小 test 集加速 (口径不变, 仅 test 规模小)。"""
-    cfg, _ = _require_data()
+    cfg, feature_path = _require_data()
     cfg = _smoke_cfg(cfg)
     res = evaluate_channel_baselines(cfg, seed=42, verbose=False)
     assert res is not None
     proto = res["_protocol"]
-    assert proto["rul_max_norm"] == float(cfg["transfer"]["rul_max_norm"])
+    # F1-A: v2 的恢复上限从 h5 meta 读 (H=rul_scale_windows=11688), 不再是
+    # transfer.rul_max_norm (4088)。用 read_channel_label_meta 读 schema 再分流断言。
+    from src.transfer.channel_dataset import (
+        read_channel_label_meta, CHANNEL_LABEL_SCHEMA_V2)
+    with h5py.File(feature_path, "r") as f:
+        meta = read_channel_label_meta(f)
+    if meta["channel_label_schema"] == CHANNEL_LABEL_SCHEMA_V2:
+        assert proto["rul_max_norm"] == meta["rul_scale_windows"]
+    else:
+        assert proto["rul_max_norm"] == float(cfg["transfer"]["rul_max_norm"])
     # library 限制生效
     assert proto["n_library"] <= 60
     for name in ["constant", "z_extrap", "arrhenius", "similarity_matching",

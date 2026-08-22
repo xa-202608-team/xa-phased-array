@@ -18,7 +18,13 @@ PA_CONFIG = ROOT / "configs" / "phased_array.yaml"
 
 
 def test_channel_mission_horizon_no_second_norm():
-    """channel + mission_horizon → factor=1.0 (数据已 /H, 不再除 4088)。"""
+    """channel + mission_horizon → factor=1.0 (数据已 /H, 不再除 4088)。
+
+    F1-A 定位注: 本路径是 legacy/v1 兼容回归 — _resolve_rul_scale 对 channel+mission_horizon
+    已无 v2 生产调用方 (run_groups 对 channel v2 直接从 channel_features.h5 meta 读
+    factor=1.0/H, 见 run_groups 中 channel 分支), 但函数未删 (service fallback / v1 legacy
+    仍用), 该测试保留作回归保护。函数确实仍返回 (1.0, 11688)。
+    """
     cfg = load_config(PA_CONFIG)
     ch = cfg["channel_level"]
     factor, scale_windows = _resolve_rul_scale(
