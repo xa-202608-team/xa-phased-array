@@ -1374,13 +1374,19 @@ def main():
         print(f">> [resume] {jsonl_path}: 旧记录 {_n_reloaded} 条重载入聚合器, "
               f"剩余重跑 {len(tasks)}/{_n_total}")
 
-    # F1 批3: resume 把导出臂跳过时必须显式失败 — bundle 需要该臂现场 val-best 权重,
-    # 静默缺 bundle 会让下游推理链 (reproduce_full P5.5) 在看似完整的产物上崩
+    # F1 批3: resume 把导出臂跳过时, bundle 必须已在盘上 (本轮早前导出) — 缺失才显式
+    # 失败; bundle 在则续跑聚合, 不重训已完成臂 (jsonl 增量恢复正是为此场景加固)
     if export_spec is not None and not any(
             t[6] == export_spec["group"] and t[1] == export_spec["seed"] for t in tasks):
-        print(f"!! 导出臂 {export_spec['group']}/seed{export_spec['seed']} 已被 resume "
-              f"跳过 (jsonl 有旧记录), bundle 无法现场导出; 请换新 --output-dir 或删该行 jsonl")
-        sys.exit(1)
+        _bundle_ok = ((Path(export_spec["dir"]) / "bundle.json").is_file()
+                      and (Path(export_spec["dir"]) / "model.pt").is_file())
+        if _bundle_ok:
+            print(f">> [export-inference] 导出臂 {export_spec['group']}/seed{export_spec['seed']} "
+                  f"已被 resume 跳过, 沿用盘上已有 bundle: {export_spec['dir']}")
+        else:
+            print(f"!! 导出臂 {export_spec['group']}/seed{export_spec['seed']} 已被 resume "
+                  f"跳过且 bundle 缺失; 请换新 --output-dir 或删该行 jsonl")
+            sys.exit(1)
 
     def _record(m):
         by[m["group"]].append(m)
