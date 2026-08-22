@@ -10,6 +10,9 @@
   3. generate_simulation（200 轨迹，sim_v2 + sim_v1，seed=42，写实际 config SHA256）
   4. build_channel_hi / build_array_hi
   5. run_groups --level channel（ch_* + cross_level 层级消融，5 seeds）
+     + --export-inference-dir（F1 批3: ch_target_only_gru seed42 val-best bundle）
+  5.5 predict_gru 推理自检（bundle 整链: 无标签读→factory 重建→rul_prediction.json
+     经 rul-prediction.schema.json 校验; 失败即失败）
   6. channel_baselines（非学习基线，失败即失败）
   7. Schema 校验 + manifest.json / metrics.json / run.log / REPRODUCE_OK
 
@@ -100,13 +103,29 @@ def main() -> int:
 
     # 5. 对比实验（正式 5 seeds；run_groups 内部已失败传播 -> 非零退出；
     #    Windows 本机退出期崩溃 0xC0000409 以产物哨兵兜底，见 RunLog）
+    #    F1 批3: 同步导出推理 bundle (ch_target_only_gru seed42 val-best) 供 5.5 自检
     log.step(f"P5 对比实验 (level=channel, {args.seeds} seed{'s' if args.seeds > 1 else ''})")
     groups_dir = out_dir / "groups"
     metrics_json = groups_dir / "all_metrics_phased_array.json"
+    bundle_dir = groups_dir / "inference_bundle"
     log.run([py, "-m", "src.experiments.run_groups", "--config", str(config_path),
              "--seeds", str(args.seeds), "--level", "channel",
+             "--export-inference-dir", str(bundle_dir),
              "--output-dir", str(groups_dir)], sentinel=metrics_json)
     all_metrics = json.loads(metrics_json.read_text("utf-8"))
+
+    # 5.5 推理 bundle 自检 (F1 批3 依赖闭合: 导出→重建→预测→schema 校验, 失败即失败)
+    import yaml
+    cfg_doc = yaml.safe_load(config_path.read_text("utf-8"))
+    ch_h5 = ROOT / cfg_doc["channel_level"]["feature_path"]
+    log.step("P5.5 推理 bundle 自检 (predict_gru, limit 4 通道)")
+    pred_dir = out_dir / "inference"
+    log.run([py, "-m", "component.predict_gru",
+             "--features", str(ch_h5), "--bundle-dir", str(bundle_dir),
+             "--output", str(pred_dir), "--stride", "50", "--limit-channels", "4"])
+    rul_pred = json.loads((pred_dir / "rul_prediction.json").read_text("utf-8"))
+    log.log(f"rul_prediction: {len(rul_pred['predictions'])} predictions, "
+            f"model={rul_pred['model']['group']} seed{rul_pred['model']['seed']}")
 
     # 6. 通道级基线（旧 entrypoint `|| echo` 吞错在此修复：失败即失败）
     log.step("P6 通道级非学习基线")
@@ -124,6 +143,8 @@ def main() -> int:
     for name, payload in baselines.items():
         if isinstance(payload, dict) and "rmse" in payload:
             metrics[f"baseline.{name}.rmse"] = round(float(payload["rmse"]), 6)
+    # F1 批3: 推理链自检产物计数 (>0 证明 bundle→predict_gru→schema 全链通)
+    metrics["inference.rul_predictions"] = float(len(rul_pred["predictions"]))
     if not metrics:
         log.log("!! 未提取到任何指标")
         raise SystemExit(1)

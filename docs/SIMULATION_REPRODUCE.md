@@ -29,6 +29,13 @@ python scripts/generate_simulation.py --n_traj 200 --seed 42 \
 python scripts/predict_telemetry.py --telemetry T.csv --metadata M.yaml \
     --telemetry-name array_gain_db --output outputs/predict
 
+# 3b) 通道级 GRU RUL 推理（F1 批3：消费 run_groups --export-inference-dir
+#     导出的 val-best bundle；无标签读 x_ch，输出 rul_prediction.json）
+python -m src.experiments.run_groups --level channel --export-inference-dir outputs/bundle ...
+python -m component.predict_gru \
+    --features data/features/phased_array/schema_ch_v1/target/channel_features.h5 \
+    --bundle-dir outputs/bundle --output outputs/inference --stride 50
+
 # 4) 评审用小规模端到端复现（仿真→HI→预测/基线→Schema 校验，CPU 分钟级）
 bash scripts/reproduce_judge.sh  --output outputs/judge     # 或 .ps1（同参数/退出码）
 # 5) 完整复现（200 轨迹 + 5 seeds；主步骤失败非零退出，已移除 || echo 吞错）
@@ -43,7 +50,7 @@ judge/full 产物（`--output` 目录）：
 | `metrics.json` | 契约 metrics.schema.json：本次运行实测指标（组 RMSE 均值 + 非学习基线），conclusion=NO_POSITIVE_TRANSFER_SUPPORTED（项目冻结结论，见 docs/MODELING.md §6） |
 | `run.log` | 全步骤命令与输出 |
 | `REPRODUCE_OK` | 仅整条流程成功时写出的哨兵 |
-| `source_mode.txt` / `sim_manifest.json` / `predict/prediction.json` / `groups/` / `baselines_channel.json` | 各步骤产物 |
+| `source_mode.txt` / `sim_manifest.json` / `predict/prediction.json` / `groups/` / `groups/inference_bundle/` / `inference/rul_prediction.json` / `baselines_channel.json` | 各步骤产物（full 含 P5.5 推理自检） |
 
 **source_mode 语义**（`manifest.json` 因契约 schema 限制不设自定义字段，以
 `metrics.run_id`、`source_mode.txt` 与 `run.log` 标注，三者一致）：

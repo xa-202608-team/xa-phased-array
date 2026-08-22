@@ -29,5 +29,31 @@ Task 9: complete (commits 1d97251..dcf6460)
   - 改动 tests/test_channel_hi.py 两处存量直读 rul_ch -> rul_ch_norm (brief 允许 b 类)
   - concern(不属F1-A): median EOL_ch>EOL_svc 是跨轨迹 median 误口径(M2 已记正确=逐轨迹 Δ_first)
   - 9.4 smoke 通过 (factor=1.0, H=11688 日志, RMSE 正数)
-终审(final review, opus) 已派发, merge-base c7b7a8e..HEAD (4 commits: f5e1df0/cc8f214/1d97251/dcf6460)
+终审(final review, opus): 无 Critical, 准予进入 F2; 3 Important + 4 Minor
+终审修复 (b92bf34): I-1 run_fault eval rul_norm 透传 H / I-2 calibrate .get 兜底 /
+  I-3 run_groups channel v1 直接用 rul_max_norm / Minor-1 service 回退 .get / Minor-3 文档双字段
+  - 59 passed (子 agent) + 独立补跑 50 passed (experiment_hygiene/service_rollout/layerwise/alpha)
+F1-A 完成: 5 commits on feature/f1a-closeout-rul-v2 (merge-base c7b7a8e)
+  f5e1df0 (cherry-pick F1 WIP) / cc8f214 (步骤1-7) / 1d97251 (任务8 测试) /
+  dcf6460 (任务9 验证) / b92bf34 (终审修复)
+  全套 371 passed / 0 failed / 6 skipped; v2 h5 重建(3200 通道)
+  未做: F2 正式 5-seed 数字重跑 / F3-F7 (InferenceDataset/bundle/RC/发布)
+
+## 用户裁决 (2026-08-22, F2 开工前)
+- 分支不 push、不开 PR, 在 feature/f1a-closeout-rul-v2 上直接续做 F2 (批2 InferenceDataset +
+  批3 bundle/predict_gru + 5-seed 正式重跑一体推进)。
+- PA6 三类消融 (channel_count/full_af/telemetry_sparsity) **并入 F4** 一起跑, 执行时用
+  多线程/多进程并行 (run_groups --workers >1 / 任务级并行), 不再单列。
+
+## F2 执行 (2026-08-22 起)
+- 批2: src/transfer/channel_inference.py (ChannelInferenceDataset 无标签/窗口末端/特征校验)
+  + schemas/rul-prediction.schema.json
+- 批3: run_groups --export-inference-{dir,group,seed} (仅匹配组-seed val-best, channel v2)
+  + component/predict_gru.py + reproduce_full 依赖闭合 (P5 导出 → P5.5 推理自检入 metrics)
+- 批2/3 完成 (本 commit): 测试 +18 (12 inference dataset + 6 bundle/predict_gru) 全绿;
+  全套回归 389 passed / 0 failed / 6 skipped (371 基线零回归);
+  真实数据冒烟: 导出不扰动训练 (RMSE=0.7058/PHM=18.72 与任务9.4 逐位一致),
+  predict_gru 真实 bundle+h5 整链通过 (norm×H×sp_s 换算核对)。
+- 5-seed: 冻结 F2 代码后正式重跑 (workers=2), 作废旧数字
+
 

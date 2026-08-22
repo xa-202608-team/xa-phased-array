@@ -274,10 +274,11 @@ def _run_one_task(task):
     run_one_group 自带 set_seed + reset_global_memory_bank, 多进程下 RNG 与
     MMD bank 均为进程私有 → 与串行行为一致 (顺序无关, 逐位等价)。
     """
-    (mode, seed, cfg, smoke, enc_ov, component, tag_name, level, k_shot) = task
+    (mode, seed, cfg, smoke, enc_ov, component, tag_name, level, k_shot,
+     export_spec) = task
     return run_one_group(mode, seed, cfg, smoke=smoke, encoder_override=enc_ov,
                          component=component, group_name=tag_name, level=level,
-                         k_shot=k_shot)
+                         k_shot=k_shot, export_spec=export_spec)
 
 
 def _load_jsonl_records(jsonl_path):
@@ -349,6 +350,93 @@ def _build_model(cfg, n_features, n_target, device, encoder_override=None):
     from src.models.factory import build_transfer_model
     return build_transfer_model(cfg, n_features=n_features, n_target=n_target,
                                 encoder_type=encoder_override, device=device)
+
+
+# F1 批3: 推理 bundle 契约版本 (component/predict_gru.py 按此识别)
+INFERENCE_BUNDLE_SCHEMA = "channel-inference-bundle-v1"
+
+
+def _bundle_git_commit() -> str:
+    """bundle.json 的 git 溯源: XA_GIT_COMMIT 覆盖 (Docker 导出环境) > git rev-parse。
+
+    与 scripts/reproduce_judge._git_commit 同模式; 取不到即报错 (bundle 不允许无溯源)。
+    """
+    import os
+    import subprocess as _sp
+    env = os.environ.get("XA_GIT_COMMIT", "").strip()
+    if len(env) == 40 and all(c in "0123456789abcdef" for c in env):
+        return env
+    try:
+        out = _sp.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT,
+                               stderr=_sp.DEVNULL)
+        commit = out.decode().strip()
+        if len(commit) == 40:
+            return commit
+    except (OSError, _sp.CalledProcessError):
+        pass
+    raise RuntimeError(
+        "无法确定 git_commit (bundle 溯源必需); 导出环境请设置 XA_GIT_COMMIT=<40 位 hex>")
+
+
+def export_inference_bundle(model, export_dir, *, cfg, component, group_name, seed,
+                            encoder, ch_meta, feature_mean, feature_std,
+                            drop_features, metrics, L, n_features, n_target):
+    """F1 批3: 导出 EXPLICIT 推理 bundle (model.pt + bundle.json)。
+
+    调用点在 _train_with_early_stop 恢复 val-best 权重之后 → 导出的必是早停最佳。
+    bundle.json 自洽携带 factory 重建模型所需的全部架构参数 + 目标域 z-score 统计量
+    + RUL 尺度元数据 (v2: H/sample_period_s, h5 attrs 唯一真源), 推理侧
+    (component/predict_gru.py) 不依赖训练 config。仅支持 channel_label_v2。
+    torch.save/json 写盘不消耗 RNG, 不影响同批其他组-seed 的可复现性。
+    """
+    from datetime import datetime, timezone
+    from src.sim.build_channel_hi import CANONICAL_COLS
+    if ch_meta.get("channel_label_schema") != CHANNEL_LABEL_SCHEMA_V2:
+        raise ValueError(
+            f"inference bundle 仅支持 {CHANNEL_LABEL_SCHEMA_V2} "
+            f"(得 {ch_meta.get('channel_label_schema')}); 旧 v1 h5 请先重建")
+    export_dir = Path(export_dir)
+    export_dir.mkdir(parents=True, exist_ok=True)
+    mc, tc = cfg["model"], cfg["transfer"]
+    gru_cfg = mc.get("gru", {})
+    kept = [c for c in CANONICAL_COLS if c not in (drop_features or [])]
+    bundle = {
+        "bundle_schema": INFERENCE_BUNDLE_SCHEMA,
+        "component": component,
+        "group": group_name,
+        "seed": int(seed),
+        "encoder": encoder,
+        "input_len_L": int(L),
+        "feature_names": kept,
+        "n_features": int(n_features),       # 源域 canonical 维 (encoder 输入)
+        "n_target": int(n_target),           # 目标域 x_ch 维 (drop 后)
+        "model": {
+            "tcn": {k: mc["tcn"][k] for k in
+                    ("channels", "kernel_size", "num_blocks", "dropout")},
+            "latent_dim": mc["latent_dim"],
+            "adapter_hidden": tc["adapter_hidden"],
+            "gru": {"hidden": int(gru_cfg.get("hidden", 64)),
+                    "num_layers": int(gru_cfg.get("num_layers", 2)),
+                    "dropout": float(gru_cfg.get("dropout", mc["tcn"]["dropout"]))},
+        },
+        "normalizer": {"mean": [float(v) for v in np.asarray(feature_mean).ravel()],
+                       "std": [float(v) for v in np.asarray(feature_std).ravel()]},
+        "rul": {"channel_label_schema": ch_meta["channel_label_schema"],
+                "rul_scale_windows": float(ch_meta["rul_scale_windows"]),
+                "sample_period_s": float(ch_meta["sample_period_s"])},
+        "metrics": {"val_rmse": float(metrics.get("val_rmse", float("nan"))),
+                    "test_rmse": float(metrics.get("rmse", float("nan"))),
+                    "test_phm": float(metrics.get("phm", float("nan")))},
+        "git_commit": _bundle_git_commit(),
+        "exported_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    torch.save(model.state_dict(), export_dir / "model.pt")
+    (export_dir / "bundle.json").write_text(
+        json.dumps(bundle, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8")
+    print(f"  [export-inference] bundle -> {export_dir} "
+          f"({group_name} seed{seed}, val_rmse={bundle['metrics']['val_rmse']:.4f})")
+    return export_dir
 
 
 def _train_epoch(model, loader, opt, device, huber, mse, lam,
@@ -482,7 +570,8 @@ def _train_with_early_stop(model, ltr, lva, opt, device, huber, mse, lam, e, tag
 
 
 def run_one_group(mode, seed, cfg, smoke=False, encoder_override=None,
-                  component="wheel", group_name=None, level="service", k_shot=None):
+                  component="wheel", group_name=None, level="service", k_shot=None,
+                  export_spec=None):
     set_seed(seed, cfg["reproducibility"]["deterministic"], cfg["reproducibility"]["cudnn_benchmark"])
     reset_global_memory_bank()          # 任务 1: 每 run 清全局 MMD bank, 防跨 seed/group 累积污染
     L = int(cfg["model"]["input_len_L"])
@@ -751,6 +840,16 @@ def run_one_group(mode, seed, cfg, smoke=False, encoder_override=None,
     # A1 预注册纪律: α 只在 train/val 上选 — 所有组记录 val_rmse (eval_test 同口径,
     # 仅失效轨迹), 端点臂 (random/source) 重跑时同样带上, α 选择集 {0,0.05,0.1,0.25,0.5,1} 全覆盖
     m["val_rmse"] = eval_test(model, lva, device)["rmse"]
+    # F1 批3: EXPLICIT bundle 导出 (仅匹配组-seed; 此刻权重=val-best, 归一统计量/尺度
+    # 元数据均在作用域; smoke 也允许导出供链路自检, 正式数字以非 smoke 跑为准)
+    if (export_spec is not None and level == "channel"
+            and group_name == export_spec["group"] and seed == export_spec["seed"]):
+        export_inference_bundle(
+            model, export_spec["dir"], cfg=cfg, component=component,
+            group_name=group_name, seed=seed, encoder=enc, ch_meta=ch_meta,
+            feature_mean=_fm, feature_std=_fs,
+            drop_features=tc.get("ablation_drop_features"), metrics=m,
+            L=L, n_features=featsS.shape[1], n_target=xT.shape[1])
     if _alpha is not None:
         m["alpha"] = _alpha
     if _layerwise_depth is not None:
@@ -1158,6 +1257,14 @@ def main():
                          "与外部实验共存时按显存余量选 (如 --workers 2)")
     ap.add_argument("--threads-per-worker", type=int, default=4,
                     help="每 worker 进程 torch CPU 线程上限 (默认 4); 防 多进程×全核线程 资源爆炸")
+    ap.add_argument("--export-inference-dir", default=None,
+                    help="F1 批3: 导出推理 bundle (model.pt + bundle.json) 到该目录; "
+                         "导出组/种子默认取 config experiments.primary_model_group / config seed "
+                         "(正式口径 = ch_target_only_gru seed42 val-best)")
+    ap.add_argument("--export-inference-group", default=None,
+                    help="覆盖导出组 (默认 config experiments.primary_model_group)")
+    ap.add_argument("--export-inference-seed", type=int, default=None,
+                    help="覆盖导出种子 (默认 config seed, 如 42)")
     args = ap.parse_args()
     # P0-2: 产物持久化 — --output-dir 指定产物目录 (Docker 挂载可回收); None=旧位置 (docs/ + checkpoints/)
     out_dir = Path(args.output_dir) if args.output_dir else None
@@ -1198,6 +1305,18 @@ def main():
     by = {}   # group_name (或 group_name+k=..) -> [metrics]
     _failures = []   # P0-2: 失败传播 — 记录所有失败臂, main 末尾任一失败则 sys.exit(1)
 
+    # F1 批3: 推理 bundle 导出规格 (run_one_group 内按 组-seed 精确匹配触发)
+    export_spec = None
+    if args.export_inference_dir:
+        _exp_group = args.export_inference_group or exp_cfg.get("primary_model_group")
+        _exp_seed = (args.export_inference_seed if args.export_inference_seed is not None
+                     else int(cfg["seed"]))
+        if not _exp_group:
+            ap.error("--export-inference-dir 需导出组: --export-inference-group 或 "
+                     "config experiments.primary_model_group")
+        export_spec = {"dir": Path(args.export_inference_dir),
+                       "group": _exp_group, "seed": _exp_seed}
+
     # 任务收集: (mode, seed, cfg, smoke, enc_ov, component, tag_name, level, k_shot)
     tasks = []
     for gname in group_names:
@@ -1225,7 +1344,18 @@ def main():
             for s in range(n_seed):
                 seed = cfg["seed"] + s
                 tasks.append((mode, seed, cfg, args.smoke, enc_ov, component,
-                              tag_name, level, k_shot))
+                              tag_name, level, k_shot, export_spec))
+
+    # F1 批3: 导出组-seed 必须落在本次任务集且为 channel level (bundle 仅通道级 v2)
+    if export_spec is not None:
+        _match = [t for t in tasks if t[6] == export_spec["group"]
+                  and t[1] == export_spec["seed"]]
+        if not _match:
+            ap.error(f"导出组-seed {export_spec['group']}/seed{export_spec['seed']} "
+                     "不在本次任务集 (检查 --groups / --k-shot 后缀 / --seeds 范围)")
+        if any(t[7] != "channel" for t in _match):
+            ap.error(f"导出组 {export_spec['group']} 须为 channel level "
+                     "(推理 bundle 仅支持通道级 v2)")
 
     # 增量落盘 + 恢复: jsonl 记录已完成 组-seed, 中断重启只补缺口 (2026-08-18 事故加固);
     # 旧记录须重载入 by 聚合器 (GPT 四审+1 修正) — 只跳过不重载会让恢复跑的
@@ -1243,6 +1373,14 @@ def main():
                 _n_reloaded += 1
         print(f">> [resume] {jsonl_path}: 旧记录 {_n_reloaded} 条重载入聚合器, "
               f"剩余重跑 {len(tasks)}/{_n_total}")
+
+    # F1 批3: resume 把导出臂跳过时必须显式失败 — bundle 需要该臂现场 val-best 权重,
+    # 静默缺 bundle 会让下游推理链 (reproduce_full P5.5) 在看似完整的产物上崩
+    if export_spec is not None and not any(
+            t[6] == export_spec["group"] and t[1] == export_spec["seed"] for t in tasks):
+        print(f"!! 导出臂 {export_spec['group']}/seed{export_spec['seed']} 已被 resume "
+              f"跳过 (jsonl 有旧记录), bundle 无法现场导出; 请换新 --output-dir 或删该行 jsonl")
+        sys.exit(1)
 
     def _record(m):
         by[m["group"]].append(m)
@@ -1268,11 +1406,12 @@ def main():
                     print(f"!! {t[6]} seed{t[1]} 失败: {exc}")
                     _failures.append(f"{t[6]}/seed{t[1]}: {exc}")   # P0-2: 计数, main 末尾非零退出
     else:
-        for mode, seed, _cfg, smoke, enc_ov, comp, tag_name, level, k_shot in tasks:
+        for mode, seed, _cfg, smoke, enc_ov, comp, tag_name, level, k_shot, _exp in tasks:
             try:
                 m = run_one_group(mode, seed, cfg, smoke=smoke,
                                   encoder_override=enc_ov, component=comp,
-                                  group_name=tag_name, level=level, k_shot=k_shot)
+                                  group_name=tag_name, level=level, k_shot=k_shot,
+                                  export_spec=_exp)
                 _record(m)
             except Exception as exc:    # noqa: BLE001
                 print(f"!! {tag_name} seed{seed} 失败: {exc}")
