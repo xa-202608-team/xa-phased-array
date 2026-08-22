@@ -133,6 +133,29 @@ LABELS = {
 }
 
 
+def _resolve_rul_scale(level, channel_cfg, transfer_cfg):
+    """RUL 归一尺度策略 (F1 收口, channel_label_v2)。
+
+    返回 (factor, scale_windows):
+      - channel + channel_cfg["rul_scale_policy"]=="mission_horizon":
+            factor=1.0 (build_channel_hi 已把标签除以全局 H, run_groups 不再二次除
+            transfer.rul_max_norm=4088, 避免双重重归一); scale_windows=H。
+      - channel + legacy_cap (旧 v1 路径) 或 service: factor=transfer.rul_max_norm
+            (旧路径沿用跨 seed 固定上限, 兼容旧数据)。
+    """
+    if level == "channel" and channel_cfg.get("rul_scale_policy") == "mission_horizon":
+        from src.sim.build_channel_hi import compute_mission_horizon_windows
+        H = compute_mission_horizon_windows(
+            duration_years=float(channel_cfg.get("mission_horizon_years", transfer_cfg.get(
+                "mission_horizon_years", 8.0))),
+            sample_period_s=float(channel_cfg.get("mission_sample_period_s", transfer_cfg.get(
+                "sample_period_s", 21600.0))))
+        return 1.0, float(H)
+    if "rul_max_norm" in transfer_cfg:
+        return float(transfer_cfg["rul_max_norm"]), float(transfer_cfg["rul_max_norm"])
+    return None, None
+
+
 def _alpha_from_group(group_name):
     """A1 α-soft 组名 → α 值。
 
@@ -321,14 +344,10 @@ def _resolve_group(group_name, cfg):
 
 
 def _build_model(cfg, n_features, n_target, device, encoder_override=None):
-    mc = cfg["model"]
-    tc = cfg["transfer"]
-    enc = encoder_override or mc["encoder"]
-    return TransferModel(
-        encoder_type=enc, n_features=n_features, n_target=n_target,
-        channels=mc["tcn"]["channels"], kernel_size=mc["tcn"]["kernel_size"],
-        num_blocks=mc["tcn"]["num_blocks"], dropout=mc["tcn"]["dropout"],
-        latent_dim=mc["latent_dim"], adapter_hidden=tc["adapter_hidden"]).to(device)
+    # F1 收口: 委托唯一构造函数, 与导出器/predict_gru 零漂移 (src/models/factory.py)
+    from src.models.factory import build_transfer_model
+    return build_transfer_model(cfg, n_features=n_features, n_target=n_target,
+                                encoder_type=encoder_override, device=device)
 
 
 def _train_epoch(model, loader, opt, device, huber, mse, lam,
@@ -543,14 +562,19 @@ def run_one_group(mode, seed, cfg, smoke=False, encoder_override=None,
         return np.isin(tidT, ids)
 
     # P1-2: RUL 归一因子用 config 固定物理上限 (跨 seed 可比); 缺失回退 train-only max
-    if "rul_max_norm" in tc:
-        rul_max = float(tc["rul_max_norm"])
-    else:
+    # F1 收口: channel + mission_horizon → 数据已由 build_channel_hi 除以全局 H (v2),
+    # 这里 factor=1.0 不再二次除 transfer.rul_max_norm(4088), 避免双重重归一。服务级沿用旧上限。
+    rul_factor, rul_scale_windows = _resolve_rul_scale(
+        level, (locals().get("ch_cfg") or cfg["channel_level"]), tc)
+    if rul_factor is None:
         rul_max_train = float(rulT[mask(tr)].max())     # 回退 (跨 seed 不可比, 仅兼容旧 config)
-        rul_max = rul_max_train
-        print(f"  [warning] config 未设 transfer.rul_max_norm, 回退 train-only max={rul_max:.1f}")
-    rulT = rulT / max(rul_max, 1.0)
-    lbT = lbT / max(rul_max, 1.0)
+        rul_factor = rul_max_train
+        print(f"  [warning] 无 rul 尺度策略, 回退 train-only max={rul_max_train:.1f}")
+    else:
+        print(f"  [rul-scale] level={level} factor={rul_factor}"
+              f"{(' (H=' + str(rul_scale_windows) + ' v2 已归一)') if level == 'channel' and rul_factor == 1.0 else ''}")
+    rulT = rulT / max(rul_factor, 1.0)
+    lbT = lbT / max(rul_factor, 1.0)
 
     # 任务 3: 源 MMD 对齐窗只用 source train 器件 (val 器件不参与迁移对齐)
     _src_tr = np.asarray(splitS) == "train"
