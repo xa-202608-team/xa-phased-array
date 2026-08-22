@@ -56,4 +56,22 @@ F1-A 完成: 5 commits on feature/f1a-closeout-rul-v2 (merge-base c7b7a8e)
   predict_gru 真实 bundle+h5 整链通过 (norm×H×sp_s 换算核对)。
 - 5-seed: 冻结 F2 代码后正式重跑 (workers=2), 作废旧数字
 
+## F2 正式跑完成 (2026-08-22 晚)
+- 执行事故: run-1/workers=2 于 27 臂硬崩, run-2 续至 29 臂再崩 (Windows spawn 孤儿 worker,
+  父进程死, 与 reproduce_full 注释的退出期崩溃同型; 无 traceback); 清孤儿后 run-3 串行
+  (--workers 1, python -u) 收口 40/40 臂, jsonl 零损失。EXIT=127 为 Windows 收尾期退出码
+  问题 (产物哨兵齐全, 同 reproduce_full 已知现象)。
+- resume 导出守卫: 376006a — 导出臂被 resume 跳过且 bundle 已在盘 → 沿用续跑 (否则拒绝);
+  13 测试验证, run-3 实际走到该分支。
+- level_control 两缺陷修复 (本轮 commit): ① *_kall 硬编码组名 → 裸名回退 (init/full/mmd
+  三对照同步回退); ② 跨层级归一口径混用 → 绝对窗口口径配对, 每臂落盘 rul_scale_windows
+  (jsonl 40 条已按 h5 attrs/config 真源回填), 渲染注明单位与标签定义差异; +4 单测
+  (test_rul_scale_policy), 受影响子集 49 passed。
+- 新数字 (v2 ÷H=11688, 旧 v1 数字作废): gru 0.1551±0.0131 / tcn 0.1927±0.0254 /
+  source_frozen 0.1693±0.0151 / source_mmd 0.1693±0.0145 / random_frozen 0.1710±0.0163 /
+  random_full 0.1691±0.0148 / random_nommd 0.1476±0.0253 / cross_level(service ÷4088)
+  0.2793±0.0245; 归因三对照 CI 全跨 0 → NO_POSITIVE_TRANSFER 冻结结论 v2 口径复现;
+  level_control(窗口口径) Δ=−837.6±153.0 CI[−1027.6,−647.5] (service 侧更低, 含任务视界差,
+  降级探索性)。产物: outputs/f2_formal_5seed/ (results md + all_metrics json + bundle)。
+
 

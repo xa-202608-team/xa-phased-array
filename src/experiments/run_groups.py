@@ -837,6 +837,9 @@ def run_one_group(mode, seed, cfg, smoke=False, encoder_override=None,
     m["seed"] = seed
     m["encoder"] = enc
     m["level"] = level
+    # F2 收口: 记录本臂标签归一尺度 (channel v2=H=11688 / service=4088), 供跨层级
+    # level_control 在绝对窗口口径下配对 (归一口径跨层级不可比, 尺度混用禁令)
+    m["rul_scale_windows"] = float(rul_scale_windows)
     # A1 预注册纪律: α 只在 train/val 上选 — 所有组记录 val_rmse (eval_test 同口径,
     # 仅失效轨迹), 端点臂 (random/source) 重跑时同样带上, α 选择集 {0,0.05,0.1,0.25,0.5,1} 全覆盖
     m["val_rmse"] = eval_test(model, lva, device)["rmse"]
@@ -935,6 +938,7 @@ def aggregate(by, primary_source_group=None):
     # T6.3: 优先 ch_* 版本 (M7 通道级), 回退旧组 (PA6 服务级)
     init_ctrl = None
     for _src_fg, _rf in [("ch_source_pretrain_frozen_kall", "ch_random_frozen_kall"),
+                         ("ch_source_pretrain_frozen", "ch_random_frozen"),   # F2: 无 k-shot 正式跑裸名回退
                          ("source_pretrain_finetune", "random_frozen")]:
         if _src_fg in by and _rf in by:
             _by_s = {m["seed"]: m["rmse"] for m in by[_src_fg]}
@@ -944,6 +948,7 @@ def aggregate(by, primary_source_group=None):
     # GPT §3 归因: source_mmd_physics (源ckpt+S3全微调) vs random_full_finetune (随机+S3全微调), 唯一差别=源 ckpt
     full_ctrl = None
     for _sm, _rf in [("ch_source_mmd_physics_kall", "ch_random_full_finetune_kall"),
+                     ("ch_source_mmd_physics", "ch_random_full_finetune"),   # F2: 裸名回退
                      ("source_mmd_physics", "random_full_finetune")]:
         if _sm in by and _rf in by:
             _by_m = {m["seed"]: m["rmse"] for m in by[_sm]}
@@ -953,6 +958,7 @@ def aggregate(by, primary_source_group=None):
     # GPT §3 P0-2: random_full_finetune (随机+S3+MMD) vs random_nommd (随机+S3 无MMD), 唯一差别=MMD
     mmd_ctrl = None
     for _mmd, _nomd in [("ch_random_full_finetune_kall", "ch_random_nommd_kall"),
+                        ("ch_random_full_finetune", "ch_random_nommd"),      # F2: 裸名回退
                         ("random_full_finetune", "random_nommd")]:
         if _mmd in by and _nomd in by:
             _by_mmd = {m["seed"]: m["rmse"] for m in by[_mmd]}
@@ -973,18 +979,37 @@ def aggregate(by, primary_source_group=None):
     # T6.4 level_control (M7 通道级矩阵核心论证量): 同 source ckpt + 同统计口径,
     # 唯一变量 = 迁移接口层级 (channel 器件层 vs service 服务层)。
     # level_control = service_rmse − channel_rmse (per-seed paired)
-    #   正 → channel level 更优 (RMSE 更低, 预期: 器件层迁移接口更匹配 source 层级)
-    #   负 → service level 更优
+    #   正 → channel level 更优 (RMSE 更低); 负 → service level 更优
+    # F2 收口: ① 组名回退 — k-shot 跑用 *_kall 后缀, 无 k-shot 正式跑用裸名 (旧硬编码
+    # _kall 在正式跑配不上对 → CI 静默 None, 已修); ② 尺度统一 — channel v2 标签 ÷H(11688)
+    # 与 service 标签 ÷4088 归一口径不同, 直接比归一 RMSE 是尺度混用, 配对在**绝对窗口数**
+    # 口径进行 (rmse × 各臂记录的 rul_scale_windows), scales 随结果落盘供审计。
+    def _group_scale(mtrs):
+        scales = {m.get("rul_scale_windows") for m in mtrs}
+        scales.discard(None)
+        if len(scales) != 1:
+            return None                      # 缺记录或组内尺度不一致 → 放弃转换 (显式 None)
+        return float(next(iter(scales)))
+
     level_ctrl = None
-    ch_main = "ch_source_mmd_physics_kall"
-    svc_main = "cross_level_transfer"
-    if ch_main in by and svc_main in by:
-        level_ctrl = _paired_delta_ci(
-            {m["seed"]: m["rmse"] for m in by[svc_main]},   # target = service
-            {m["seed"]: m["rmse"] for m in by[ch_main]})    # source = channel
-        # _paired_delta_ci 返回 delta = target − source = service − channel
+    _lc_extra = {}
+    ch_main = next((g for g in ("ch_source_mmd_physics_kall", "ch_source_mmd_physics")
+                    if g in by), None)
+    svc_main = "cross_level_transfer" if "cross_level_transfer" in by else None
+    if ch_main and svc_main:
+        ch_scale, svc_scale = _group_scale(by[ch_main]), _group_scale(by[svc_main])
+        if ch_scale and svc_scale:
+            level_ctrl = _paired_delta_ci(
+                {m["seed"]: m["rmse"] * svc_scale for m in by[svc_main]},   # service → 窗口
+                {m["seed"]: m["rmse"] * ch_scale for m in by[ch_main]})     # channel → 窗口
+            _lc_extra = {"unit": "windows", "channel_scale": ch_scale,
+                         "service_scale": svc_scale}
+        else:
+            # 旧记录缺 rul_scale_windows (回填前) — 不做跨尺度比较, 显式标注原因
+            _lc_extra = {"unit": "normalized_incomparable",
+                         "reason": "缺 rul_scale_windows 记录, 拒绝跨尺度配对"}
     agg["_level_control"] = {"channel_group": ch_main, "service_group": svc_main,
-                             "paired": level_ctrl}
+                             "paired": level_ctrl, **_lc_extra}
     # T6.2 k-shot 维度: 对每个 k 算 transfer_gain = ch_target − ch_source_mmd_physics
     k_shot_stats = {}
     for g in agg:
@@ -1195,6 +1220,7 @@ def write_results(agg, physical, path, smoke, n_seeds, group_names, component,
     if _lc and _lc.get("paired") is not None:
         _ps = _lc["paired"]
         _expl = " [探索性分析, n<10 不作确认性结论]" if _ps["exploratory_only"] else ""
+        _unit = {"windows": " (绝对窗口数口径)"}.get(_lc.get("unit", ""), "")
         # delta = service − channel: 正 → channel 更优 (RMSE 更低); 负 → service 更优
         if _ps["ci_crosses_zero"]:
             _sig = "无显著差异 (CI 跨 0)"
@@ -1203,13 +1229,16 @@ def write_results(agg, physical, path, smoke, n_seeds, group_names, component,
         else:
             _sig = "service level 显著更优 (CI 全负侧)"
         lines.append(
-            f"- **level_control** ({_lc['service_group']} − {_lc['channel_group']}, per-seed paired){_expl}: "
-            f"Δ={_ps['delta_mean']:+.4f} ± {_ps['delta_std']:.4f}, "
-            f"95% CI [{_ps['ci95_lo']:+.4f}, {_ps['ci95_hi']:+.4f}] → {_sig}\n"
+            f"- **level_control** ({_lc['service_group']} − {_lc['channel_group']}, per-seed paired){_unit}{_expl}: "
+            f"Δ={_ps['delta_mean']:+.1f} ± {_ps['delta_std']:.1f}, "
+            f"95% CI [{_ps['ci95_lo']:+.1f}, {_ps['ci95_hi']:+.1f}] → {_sig}\n"
         )
         lines.append(
-            "  - 语义: 唯一变量=迁移接口层级 (channel 器件层 vs service 服务层), "
-            "同 source ckpt + 同统计口径; 正向=channel 层级选对了 (器件层迁移接口匹配 source)\n"
+            "  - 口径: channel 标签 ÷H=" + str(_lc.get("channel_scale", "?")) +
+            ", service 标签 ÷" + str(_lc.get("service_scale", "?")) +
+            ", 归一口径不同 → 配对在绝对窗口数 (rmse×各自尺度) 进行; "
+            "两级标签定义不同 (channel=器件级 z≥1 / service=多维服务越限), "
+            "差异含任务视界差, 仅作层级方向参考\n"
         )
     # T6.2 k-shot 维度: 各 k 的 RMSE 表 (迁移随少样本变化)
     _ks = agg.get("_k_shot_rmse", {})
