@@ -6,10 +6,10 @@
 ## 约定
 
 - `public_summary.json`：公开冻结摘要（`schema_version=1.1.0`，
-  `component=phased_array`）。当前 `status=NOT_YET_VERIFIED`、`metrics=[]`；
-  只有当指标来源逐项核实后才允许填入，**不得编造数字**。
-- `expected_metrics.json`：复现验证的期望指标门槛，同样在未核实前保持
-  `NOT_YET_VERIFIED` + 空 `metrics`。
+  `component=phased_array`）。2026-08-21 起为 `status=VERIFIED_WITH_BOUNDARY_EVIDENCE`
+  （迁移边界证据逐项核实后填入，**不得编造数字**）。
+- `expected_metrics.json`：复现验证的期望指标门槛，gate 仍 `NOT_ENABLED`
+  （按其 gate_reason：正式容差须 multi-seed full 复现且跨环境洁净验证后冻结）。
 - 槽位白名单清单登记在 `results_manifest.json`（`schema_version=1.1.0`，
   条目含 size/sha256 与 `rc_payload` 开关，批准进 RC payload 时按裁决逐项翻转；
   `scripts/stage_handoff_payload.py` 装配 staging、

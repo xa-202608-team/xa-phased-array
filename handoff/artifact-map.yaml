@@ -9,12 +9,16 @@ environment:
   pytorch: "2.11.0+cu130"
   os: "Windows-10"
   device: "cpu"
-random_seeds: [42]
+random_seeds: [42, 43, 44, 45, 46]
 public_summary: >-
-  主模型 target_only_gru 5-seed 归一化 RUL RMSE=0.2521（最强非学习基线 constant
-  RMSE=0.3917，约为主模型的 1.55 倍，主模型更优）；跨域迁移结论
-  NO_POSITIVE_TRANSFER_SUPPORTED（ΔRMSE 95%CI 全负，源 ckpt 显著负迁移）。
-  完整冻结数字与逐项来源见 results/public_summary.json 与 docs/MODELING.md §6。
+  主模型 ch_target_only_gru 5-seed v2 口径归一 RMSE=0.1551±0.0131（÷H=11688，
+  ≈1813 窗口；2026-08-22 F2 正式重跑，取代旧 v1 口径数字）。非学习基线（同失效
+  子集/同 split）：z_extrap 0.1588 落在主模型 seed 波动带内（领先幅度小于波动，
+  诚实口径不作夸大），constant 0.2293 / arrhenius 0.2945 / particle_filter
+  0.6833 劣势明确。迁移终局 NO_CONFIRMED_POSITIVE_TRANSFER（归因三对照 per-seed
+  CI 全跨 0，源权重不可区分于随机；F2 v2 口径复现五重封口结论。旧文案"源 ckpt
+  显著负迁移"系清零重审已撤回口径）。完整冻结数字与逐项来源见
+  results/public_summary.json 与 docs/MODELING.md §6。
 commands:
   - "python scripts/reproduce_judge.py --output <OUTPUT_DIR>"
   - "python scripts/reproduce_full.py --output <OUTPUT_DIR>"

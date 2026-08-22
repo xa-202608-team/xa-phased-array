@@ -74,4 +74,22 @@ F1-A 完成: 5 commits on feature/f1a-closeout-rul-v2 (merge-base c7b7a8e)
   level_control(窗口口径) Δ=−837.6±153.0 CI[−1027.6,−647.5] (service 侧更低, 含任务视界差,
   降级探索性)。产物: outputs/f2_formal_5seed/ (results md + all_metrics json + bundle)。
 
+## F3 manifest 换血 (2026-08-22 深夜, 本 commit)
+- results_manifest 重建 (6 RC + 3 归档): F2 all_metrics + 40 臂 jsonl + resume/aggregate 双日志
+  + v2 非学习基线 + 边界摘要 (rc_payload=true, verified_local, git=074b318); 历史
+  arch_aligned/kshot_frozen/源预训练摘要 → archived_* + rc_payload=false (撤 RC, 不撤文件);
+  空日志 run_groups_gpu.log 条目+文件双删。
+- v2 基线 (失效子集/同 split/÷H): **z_extrap 0.1588 / similarity 0.1795 / constant 0.2293 /
+  arrhenius 0.2945 / particle_filter 0.6833** — z_extrap 落主模型 seed 波动带内 (0.1551±0.0131),
+  对模型领先幅度小于波动, 已按诚实口径写入 artifact-map (F5 文档统一需同步此口径)。
+- 三处旧叙事修复: artifact-map public_summary (作废 0.2521 + 已撤回"显著负迁移"→ v2 数字 +
+  NO_CONFIRMED_POSITIVE_TRANSFER); checkpoint_manifest status_note (同撤回口径) +
+  两 ckpt reproduce_status 升级 frozen_artifact_sha_verified_local (sha 与盘上核实一致);
+  results/README public_summary 状态行。
+- 连带发现并修: data_manifest entry channel_features.h5 sha 为 v1 旧值 (任务9 v2 重建后漏更) →
+  更新 sha/size/git/reproduce_status + provenance_note; 其余 14 文件全 OK。
+- 验证: stage --clean 20 文件全 sha 对; scan_handoff_payload 0 violations;
+  handoff 测试子集 20 passed。staging 残留教训: stage 必须配 --clean (旧 v0.2.0 拷贝会滞留)。
+
+
 

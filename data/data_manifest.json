@@ -2,7 +2,7 @@
   "schema_version": "1.1.0",
   "component": "phased_array",
   "status": "SOURCES_VERIFIED",
-  "verified_at": "2026-08-15",
+  "verified_at": "2026-08-22",
   "note": "来源与重建方式已逐项核实（docs/DATA_DICTIONARY.md）。本地工件按数据治理不入库；sha256 为 null 的条目在本地生成后经 reproduce_judge/full 的 sim_manifest.json 与 source_report.json 如实登记，不预填编造哈希；本地绝对路径不写入本清单。",
   "entries": [
     {
@@ -82,8 +82,8 @@
     },
     {
       "path": "features/phased_array/schema_ch_v1/target/channel_features.h5",
-      "size": 680348284,
-      "sha256": "9170fdc841d328e5c5ff3200bff5b202fa585240ac015c9aba745d9dae545ffe",
+      "size": 776901288,
+      "sha256": "02ceba414e61f66a6ff1c60e4b315abc191c8b37dd13934f96c191d28326728a",
       "role": "channel_level_features",
       "random_seeds": [
         42
@@ -91,12 +91,13 @@
       "command": "python -m src.sim.build_channel_hi --config configs/phased_array.yaml",
       "config": "configs/phased_array.yaml",
       "contract_version": "component-contract-v1.1.0",
-      "git_commit": "fix/migration-experiment-clear",
+      "git_commit": "074b3184741f6fcf4a5b9ffdb6f6ac2a6682d101",
       "source_mode": "synthetic",
       "redistributable": true,
       "source_url": null,
-      "reproduce_status": "verified_local_2026_08_17_rebuild",
-      "rc_payload": true
+      "reproduce_status": "verified_local_2026_08_22_v2_rebuild",
+      "rc_payload": true,
+      "provenance_note": "channel_label_v2 重建 (2026-08-22 F1-A 任务9): 200 traj × 16 sub = 3200 通道, rul_ch_windows+rul_ch_norm 双字段, H=rul_scale_windows=11688, sample_period_s=21600, t_dev_unit=degC; 替代 2026-08-17 v1 产物 (旧 sha 9170fdc8…)"
     },
     {
       "path": "features/phased_array/schema_v1/target/target_features.h5",
