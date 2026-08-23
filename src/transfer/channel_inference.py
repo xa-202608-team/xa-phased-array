@@ -127,6 +127,16 @@ class ChannelInferenceDataset(Dataset):
                 torch.tensor(end, dtype=torch.long))
 
 
+def eligible_channel_keys(channel_keys: np.ndarray, L: int) -> np.ndarray:
+    """按升序返回窗口数达标 (T >= L) 的通道键。
+
+    --limit-channels 场景必须从合格通道中按序截取; 否则在含早失效短通道的数据上
+    可能取到全池 T < L, 使 ChannelInferenceDataset 无完整窗口可用 (F6 回归)。
+    """
+    keys, counts = np.unique(channel_keys, return_counts=True)
+    return keys[counts >= int(L)]
+
+
 def normalize_with_stats(x: np.ndarray, mean: np.ndarray, std: np.ndarray) -> np.ndarray:
     """按训练侧统计量 z-score 归一 (与 run_groups 训练路径同式: (x-mean)/std)。
 

@@ -32,12 +32,23 @@ from src.models.factory import build_transfer_model
 from src.sim.build_channel_hi import CANONICAL_COLS
 from src.transfer.channel_dataset import CHANNEL_LABEL_SCHEMA_V2
 from src.transfer.channel_inference import (
-    ChannelInferenceDataset, load_channel_inference, normalize_with_stats)
+    ChannelInferenceDataset, eligible_channel_keys, load_channel_inference,
+    normalize_with_stats)
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_VERSION = "1.0.0"
 CONTRACT_VERSION = "component-contract-v1.1.0"
 COMPONENT = "phased_array"
+
+
+def limit_keep_mask(channel_keys: np.ndarray, limit_channels: int, L: int) -> np.ndarray:
+    """--limit-channels 的行掩码: 只从 T>=L 的合格通道中按序取前 N 个。
+
+    旧实现取 sorted(unique)[:N] 不筛长度, 在含早失效短通道 (如 --fast 数据) 上
+    会取到全池 T<L 而无完整窗口 (2026-08-23 F6 回归)。
+    """
+    keys = eligible_channel_keys(channel_keys, L)
+    return np.isin(channel_keys, keys[:int(limit_channels)])
 METHOD = "gru_channel_rul"
 BUNDLE_SCHEMA = "channel-inference-bundle-v1"
 SECONDS_PER_DAY = 86400.0
@@ -106,7 +117,7 @@ def predict(features_path: Path, bundle_dir: Path, stride: int = 50,
             f"遥测 h5 尺度元数据 {meta} 与 bundle {bundle['rul']} 不一致 (数据/bundle 不配套)")
 
     if limit_channels is not None:
-        keep = np.isin(ck, sorted(np.unique(ck))[:int(limit_channels)])
+        keep = limit_keep_mask(ck, limit_channels, int(bundle["input_len_L"]))
         x, ck, tid, sid = x[keep], ck[keep], tid[keep], sid[keep]
 
     x = normalize_with_stats(x, np.array(bundle["normalizer"]["mean"]),
