@@ -334,7 +334,7 @@ def plot_rul_trajectory(models_pred, traj_infos, h5_path, rul_max, out_path):
         axes[idx // 3][idx % 3].set_visible(False)
 
     f.close()
-    fig.suptitle("相控阵天线 RUL 预测轨迹 — 模型 vs 真值 vs 基线", fontsize=13, fontweight="bold")
+    fig.suptitle("服务级 RUL 预测轨迹 (旧路线 schema_v1, 非 F2 通道级主结果) — 模型 vs 真值 vs 基线", fontsize=13, fontweight="bold")
     fig.tight_layout(rect=[0, 0, 1, 0.96])
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -376,7 +376,7 @@ def plot_hi_tracking(models_pred, traj_infos, h5_path, out_path):
         ax.legend(fontsize=8)
 
     f.close()
-    fig.suptitle("相控阵天线 HI 退化追踪 — 模型预测 vs 真值", fontsize=13, fontweight="bold")
+    fig.suptitle("服务级 HI 退化追踪 (旧路线 schema_v1, 非 F2 通道级主结果) — 模型预测 vs 真值", fontsize=13, fontweight="bold")
     fig.tight_layout(rect=[0, 0, 1, 0.94])
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -454,7 +454,7 @@ def plot_rul_scatter(model, data, device, out_path, model_label="target_only_gru
 
     ax.set_xlabel("真实 RUL (归一化)", fontsize=11)
     ax.set_ylabel("预测 RUL (归一化)", fontsize=11)
-    ax.set_title(f"全测试集 RUL 散点 — {model_label}", fontsize=12, fontweight="bold")
+    ax.set_title(f"服务级全测试集 RUL 散点 (旧路线 schema_v1) — {model_label}", fontsize=12, fontweight="bold")
     ax.legend(fontsize=9, loc="lower right")
     ax.set_xlim(0, 1.05)
     ax.set_ylim(0, 1.05)
