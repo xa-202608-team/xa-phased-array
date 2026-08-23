@@ -55,6 +55,8 @@ COPY --chown=appuser:appuser tests/ /app/tests/
 COPY --chown=appuser:appuser schemas/ /app/schemas/
 COPY --chown=appuser:appuser component/ /app/component/
 COPY --chown=appuser:appuser docs/ /app/docs/
+# handoff 契约面: 仅两个已跟踪小文件 (RC 工件映射说明), payload/ 不入镜像
+COPY --chown=appuser:appuser handoff/artifact-map.yaml handoff/HANDOFF.md /app/handoff/
 COPY --chown=appuser:appuser scripts/ /app/scripts/
 COPY --chown=appuser:appuser pytest.ini /app/
 COPY --chown=appuser:appuser scripts/entrypoint.sh /app/entrypoint.sh
