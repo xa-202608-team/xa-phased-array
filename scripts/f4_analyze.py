@@ -13,6 +13,8 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 OAT = ROOT / "outputs" / "f4_oat" / "oat_results.json"
 ABL = ROOT / "outputs" / "f4_ablation"
+F2_JSONL = ROOT / "outputs" / "f2_formal_5seed" / "results_partial.jsonl"
+GROUP_CH = "ch_target_only_gru"
 BASE_SIM = ROOT / "data/simulated/phased_array/sim_v2/seed_42/phased_array_all.h5"
 F2_METRICS = ROOT / "results" / "reference" / "all_metrics_phased_array.json"
 REPORT = ROOT / "docs" / "results_phased_array_f4.md"
@@ -78,6 +80,44 @@ def b1_full_vs_simplified(k_sustain: int = 4, sll_max: float = -8.0,
     }
 
 
+def read_group_rmse_by_seed(path: Path, group: str) -> dict[int, float]:
+    rows: dict[int, float] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        if row.get("group") == group:
+            rows[int(row["seed"])] = float(row["rmse"])
+    return rows
+
+
+def paired_rmse_summary(
+    baseline: dict[int, float], variant: dict[int, float]
+) -> dict[str, float | int | list[int] | tuple[float, float]]:
+    """共同 seed 上的逐 seed 配对统计; CI = t(n-1)·s/√n, n=3 时仅描述性。"""
+    seeds = sorted(set(baseline) & set(variant))
+    if len(seeds) < 2:
+        raise ValueError("paired RMSE 至少需要 2 个共同 seed")
+    base = np.asarray([baseline[s] for s in seeds], dtype=float)
+    var = np.asarray([variant[s] for s in seeds], dtype=float)
+    delta = var - base
+    n = len(seeds)
+    delta_std = float(delta.std(ddof=1))
+    from scipy.stats import t
+    half = float(t.ppf(0.975, n - 1) * delta_std / np.sqrt(n))
+    return {
+        "seeds": seeds,
+        "n": n,
+        "baseline_mean": float(base.mean()),
+        "baseline_std": float(base.std(ddof=1)),
+        "variant_mean": float(var.mean()),
+        "variant_std": float(var.std(ddof=1)),
+        "delta_mean": float(delta.mean()),
+        "delta_std": delta_std,
+        "delta_ci": (float(delta.mean() - half), float(delta.mean() + half)),
+    }
+
+
 def main() -> int:
     lines = ["# F4 结果：±20% 参数敏感性 OAT + PA6 三类消融\n",
              "> 预注册协议: docs/f4_sensitivity_ablation_design.md (2026-08-23, 先于执行落档)。",
@@ -107,8 +147,9 @@ def main() -> int:
         lines += [
             "",
             "**判读**（相对基线的定性结论，预注册口径：如实报告，无通过/失败门）：",
-            "- **结论稳健**：10 变体轨迹失效率带 0.53–0.64、通道失效率带 0.533–0.560，"
-            "EOL 中位最大变化 ~±12%（Ea+），无一翻转数量级或方向性结论。",
+            "- **结论稳健**：10 变体轨迹失效率带 0.53–0.64、通道失效率带 0.533–0.560；"
+            "服务级 EOL 中位变化约在 ±12% 以内，通道级 EOL 对 Ea 更敏感"
+            "（Ea+20% 最坏约 −18%），无一翻转数量级或方向性结论。",
             "- **Ea 是唯一显著敏感参数**：EOL_svc −10%/+12%、EOL_ch −18%/+12% —— Arrhenius "
             "指数非线性 + 跨器件 Tj 异质 → life_ref 归一化无法吸收（物理预期）。",
             "- **ΔT_ref 精确不变 = 结构不变性，非死参数**：thermal_cycle ±20% 的 EOL/失效率与"
@@ -142,35 +183,54 @@ def main() -> int:
         "完全漏检。\n",
     ]
 
-    # ---- B2/B3
-    lines.append("## B2/B3. 通道级模型消融 (ch_target_only_gru, seeds 42–44, v2 口径)\n")
-    full = json.loads(F2_METRICS.read_text(encoding="utf-8"))["agg"]["ch_target_only_gru"]
-    lines += [f"- **full (F2 冻结, 5 seeds)**: RMSE = {full['rmse_mean']:.4f} ± {full['rmse_std']:.4f}",
-              "| 档 | RMSE (÷H) | vs full |", "|---|---|---|"]
+    # ---- B2/B3 (matched seeds 配对口径; 审计修正 2026-08-23: 不再用 F2 五种子聚合均值作基线)
+    lines.append("## B2/B3. 通道级模型消融 (ch_target_only_gru, matched seeds 42–44 配对, v2 口径)\n")
+    full_agg = json.loads(F2_METRICS.read_text(encoding="utf-8"))["agg"][GROUP_CH]
+    lines += [
+        f"- **full (F2 冻结, 5 seeds)**: RMSE = {full_agg['rmse_mean']:.4f} ± {full_agg['rmse_std']:.4f} "
+        "（主模型正式参考；seed 集不同，不用于 B2/B3 的 vs full 计算）",
+        "- 配对口径：F2 与各变体在共同 seed 上的逐 seed 配对差，CI = t(2)·s/√n "
+        "（n=3，仅描述性，不升级为确认性假设检验）\n",
+        "| 档 | RMSE (÷H) | 配对 Δ | 95% CI |", "|---|---|---|---|",
+    ]
+    full_by_seed = read_group_rmse_by_seed(F2_JSONL, GROUP_CH)
+    stats: dict[str, dict] = {}
     labels = {"b2_count": "B2 通道计数 (p_drift→存活占比)", "b3_subagg": "B3 子阵聚合",
               "b3_sparse": "B3 稀疏 1/6 cadence"}
     for name in ("b2_count", "b3_subagg", "b3_sparse"):
-        p = ABL / name / "all_metrics_config.json"
-        if not p.exists():
-            lines.append(f"| {labels[name]} | 未跑 | — |")
+        jsonl = ABL / name / "results_partial.jsonl"
+        if not jsonl.exists():
+            lines.append(f"| {labels[name]} | 未跑 | — | — |")
             continue
-        agg = json.loads(p.read_text(encoding="utf-8"))["agg"]["ch_target_only_gru"]
-        d = agg["rmse_mean"] - full["rmse_mean"]
-        lines.append(f"| {labels[name]} | {agg['rmse_mean']:.4f} ± {agg['rmse_std']:.4f} | {d:+.4f} |")
-    lines += [
-        "",
-        "**判读**：",
-        "- **B2（通道计数 vs 连续幅相）**：计数特征 RMSE 恶化 2×（+0.160）——存活占比在终末"
-        "dropout 前近常数（终末前无判别力），连续幅相观测量承载几乎全部预后信息；支持三级"
-        "退化链以连续幅相建模为主体的设计选择。",
-        "- **B3 子阵聚合**：+0.011（< 1 个 seed 波动带）——子阵级分辨率的增量价值温和，"
-        "阵列级聚合遥测已保留主要退化信息。",
-        "- **B3 稀疏 1/6 cadence**：−0.031 反而更优 —— 36h 等效 cadence 下同长窗口（L=64）"
-        "覆盖 6× 物理时程，长上下文收益超过样本量损失；**协议耦合如实注明**：本协议中 cadence "
-        "下降与窗口物理跨度上升绑定，不能归因为单一因素。工程含义：遥测 cadence 预算存在"
-        "6× 冗余空间。",
-        "",
-    ]
+        s = paired_rmse_summary(full_by_seed, read_group_rmse_by_seed(jsonl, GROUP_CH))
+        stats[name] = s
+        lo, hi = s["delta_ci"]
+        lines.append(f"| {labels[name]} | {s['variant_mean']:.4f} ± {s['variant_std']:.4f} "
+                     f"| {s['delta_mean']:+.4f} | [{lo:+.4f}, {hi:+.4f}] |")
+    verdicts = []
+    if "b2_count" in stats:
+        s = stats["b2_count"]
+        verdicts.append(
+            f"- **B2（通道计数 vs 连续幅相）**：matched-seed baseline "
+            f"{s['baseline_mean']:.4f}±{s['baseline_std']:.4f} → 计数特征 "
+            f"{s['variant_mean']:.4f}±{s['variant_std']:.4f}，配对 Δ = **{s['delta_mean']:+.4f}**，"
+            f"CI [{s['delta_ci'][0]:+.4f}, {s['delta_ci'][1]:+.4f}] —— 存活占比在终末 dropout 前"
+            "近常数（终末前无判别力），连续幅相观测量承载几乎全部预后信息；支持三级退化链以"
+            "连续幅相建模为主体的设计选择。")
+    if "b3_subagg" in stats:
+        s = stats["b3_subagg"]
+        verdicts.append(
+            f"- **B3 子阵聚合**：配对 Δ = **{s['delta_mean']:+.4f}**，CI "
+            f"[{s['delta_ci'][0]:+.4f}, {s['delta_ci'][1]:+.4f}] —— 小幅但三个配对 seed 方向一致"
+            "的恶化；子阵级分辨率有增量价值但幅度温和，阵列级聚合遥测仍保留主要退化信息。")
+    if "b3_sparse" in stats:
+        s = stats["b3_sparse"]
+        verdicts.append(
+            f"- **B3 稀疏 1/6 cadence**：配对 Δ = **{s['delta_mean']:+.4f}**，CI "
+            f"[{s['delta_ci'][0]:+.4f}, {s['delta_ci'][1]:+.4f}] 跨 0 —— 方向信号未确认；且本协议"
+            "中 cadence 下降与窗口物理跨度上升耦合（同长窗口 L=64 覆盖 6× 物理时程），不能归因"
+            "为单一因素，需要固定物理跨度的后续预注册实验才能解释。")
+    lines += ["", "**判读**：", *verdicts, ""]
     REPORT.write_text("\n".join(lines), encoding="utf-8")
     print(f">> {REPORT}")
     return 0
