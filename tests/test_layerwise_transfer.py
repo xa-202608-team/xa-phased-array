@@ -147,6 +147,12 @@ def test_runner_builds_random_model_before_loading_prefix_and_records_depth(
     cfg["reproducibility"]["deterministic"] = True
     cfg["reproducibility"]["cudnn_benchmark"] = False
 
+    # run_groups 通道级分支在 loader 前有特征文件存在性检查 (ROOT/ch.feature_path);
+    # 容器 verify 环境无 data/ 工件, 按仓内惯例 skip (同 test_channel_hi 等)
+    feat = run_groups.ROOT / cfg["channel_level"]["feature_path"]
+    if not feat.exists():
+        pytest.skip(f"先跑 build_channel_hi: 缺 {feat} (容器 verify 无 data/ 工件)")
+
     n_per_traj = 60
     tid = np.repeat(np.arange(3), n_per_traj)
     x_target = np.arange(len(tid) * 4, dtype=np.float32).reshape(len(tid), 4)

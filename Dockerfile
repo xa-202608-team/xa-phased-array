@@ -1,7 +1,7 @@
 # =====================================================================
 # 相控阵组件 - 复现镜像 (Python 3.12 + CUDA torch)
 #   构建时验证: 导入检查 + 契约 Schema 快照 + 完整 pytest (依赖缺失测试自带 skip)
-#   运行时验证: docker run --rm xa-phased-array:baseline-v0.1.0 verify
+#   运行时验证: docker run --rm xa-phased-array:v0.3.0-rc.1 verify
 #
 # 工件边界 (契约 v1.1):
 #   - canonical H5 与 .pt 不烘焙进镜像、不入 Git
@@ -55,6 +55,8 @@ COPY --chown=appuser:appuser tests/ /app/tests/
 COPY --chown=appuser:appuser schemas/ /app/schemas/
 COPY --chown=appuser:appuser component/ /app/component/
 COPY --chown=appuser:appuser docs/ /app/docs/
+# handoff 契约面: 仅两个已跟踪小文件 (RC 工件映射说明), payload/ 不入镜像
+COPY --chown=appuser:appuser handoff/artifact-map.yaml handoff/HANDOFF.md /app/handoff/
 COPY --chown=appuser:appuser scripts/ /app/scripts/
 COPY --chown=appuser:appuser pytest.ini /app/
 COPY --chown=appuser:appuser scripts/entrypoint.sh /app/entrypoint.sh
@@ -77,7 +79,7 @@ ENV XA_GIT_COMMIT=${XA_GIT_COMMIT}
 RUN python -c "\
 import json, glob, jsonschema; \
 schemas = [json.load(open(f, encoding='utf-8')) for f in sorted(glob.glob('schemas/*.schema.json'))]; \
-assert len(schemas) == 8, f'expect 8 contract schemas, got {len(schemas)}'; \
+assert len(schemas) == 9, f'expect 9 schemas (8 contract snapshots + rul-prediction), got {len(schemas)}'; \
 [jsonschema.validators.validator_for(s) for s in schemas]; \
 print('contract schemas ok:', len(schemas))" \
  && python -c "\

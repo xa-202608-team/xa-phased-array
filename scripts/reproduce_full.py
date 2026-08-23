@@ -10,6 +10,9 @@
   3. generate_simulation（200 轨迹，sim_v2 + sim_v1，seed=42，写实际 config SHA256）
   4. build_channel_hi / build_array_hi
   5. run_groups --level channel（ch_* + cross_level 层级消融，5 seeds）
+     + --export-inference-dir（F1 批3: ch_target_only_gru seed42 val-best bundle）
+  5.5 predict_gru 推理自检（bundle 整链: 无标签读→factory 重建→rul_prediction.json
+     经 rul-prediction.schema.json 校验; 失败即失败）
   6. channel_baselines（非学习基线，失败即失败）
   7. Schema 校验 + manifest.json / metrics.json / run.log / REPRODUCE_OK
 
@@ -21,6 +24,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import platform
 import sys
@@ -30,6 +34,20 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from scripts.reproduce_judge import RunLog, _git_commit, _sha256, _validate  # noqa: E402
+
+
+def build_fast_config(cfg: dict, out_dir: Path) -> dict:
+    """--fast 派生配置: 仅重定向两处特征路径到输出目录下, 其余键深拷贝原样。
+
+    旧实现 fast 中间产物直写 canonical 特征槽位, 覆盖 200 轨迹冻结基线与
+    F2 canonical 特征 (2026-08-23 F6 事故回归)。
+    """
+    fast = copy.deepcopy(cfg)
+    fast["channel_level"]["feature_path"] = (
+        out_dir / "data" / "features" / "channel_features.h5").as_posix()
+    fast["transfer"]["target_feature_path"] = (
+        out_dir / "data" / "features" / "target_features.h5").as_posix()
+    return fast
 
 
 def main() -> int:
@@ -59,10 +77,27 @@ def main() -> int:
 
     log.log(f"reproduce_full start; git_commit={commit}; fast={args.fast}")
 
+    # --fast 数据隔离 (2026-08-23 F6 回归): 派生配置重定向特征路径 + 仿真数据根,
+    # 中间产物全部落在输出目录下, 不再覆盖 canonical 冻结槽位
+    run_cfg_path = config_path
+    fast_data_root = None
+    if args.fast:
+        import yaml
+        cfg_src = yaml.safe_load(config_path.read_text("utf-8"))
+        fast_cfg = build_fast_config(cfg_src, out_dir)
+        # 文件名必须沿用原 config stem: run_groups 以 Path(config).stem 判定组件
+        # (phased_array), 换名会误入飞轮分支/找不到 source ckpt (F6 批3 回归)
+        run_cfg_path = out_dir / f"{config_path.stem}.yaml"
+        run_cfg_path.write_text(
+            yaml.safe_dump(fast_cfg, allow_unicode=True, sort_keys=False),
+            encoding="utf-8")
+        fast_data_root = out_dir / "data" / "simulated" / "phased_array"
+        log.log(f"fast 隔离: config={run_cfg_path.name}, data_root={fast_data_root}")
+
     # 1. 源域准备
     log.step("P1 源域数据准备")
     source_report_path = out_dir / "source_report.json"
-    log.run([py, "scripts/prepare_source_data.py", "--config", str(config_path),
+    log.run([py, "scripts/prepare_source_data.py", "--config", str(run_cfg_path),
              "--output", str(source_report_path)])
     source_report = json.loads(source_report_path.read_text("utf-8"))
     source_mode = source_report["source_mode"]
@@ -78,40 +113,62 @@ def main() -> int:
     if ckpt.is_file():
         log.log(f"  >> 跳过：{ckpt.relative_to(ROOT)} 已存在")
     else:
-        log.run([py, "-m", "src.train.pretrain", "--config", str(config_path),
+        log.run([py, "-m", "src.train.pretrain", "--config", str(run_cfg_path),
                  "--canonical"])
 
-    # 3. 仿真（200 轨迹双仿真集）
+    # 3. 仿真（200 轨迹双仿真集; fast 重定向数据根, 不覆盖 canonical 槽位）
     log.step(f"P3 三级链仿真 ({'fast' if args.fast else args.n_traj} 轨迹, seed=42)")
     sim_manifest_path = out_dir / "sim_manifest.json"
-    sim_cmd = [py, "scripts/generate_simulation.py", "--config", str(config_path),
+    sim_cmd = [py, "scripts/generate_simulation.py", "--config", str(run_cfg_path),
                "--seed", "42", "--manifest", str(sim_manifest_path)]
     if args.fast:
-        sim_cmd.append("--fast")
+        sim_cmd += ["--fast", "--data-root", str(fast_data_root)]
     else:
         sim_cmd += ["--n_traj", str(args.n_traj)]
     log.run(sim_cmd)
     sim_manifest = json.loads(sim_manifest_path.read_text("utf-8"))
 
-    # 4. HI 构造
+    # 4. HI 构造（fast: --indir/--in 指向隔离仿真目录, --out 指向隔离特征路径）
     log.step("P4 通道级 + 服务级 HI 构造")
-    log.run([py, "-m", "src.sim.build_channel_hi", "--config", str(config_path), "--report"])
-    log.run([py, "-m", "src.sim.build_array_hi", "--config", str(config_path), "--report"])
+    ch_cmd = [py, "-m", "src.sim.build_channel_hi", "--config", str(run_cfg_path), "--report"]
+    ar_cmd = [py, "-m", "src.sim.build_array_hi", "--config", str(run_cfg_path), "--report"]
+    if args.fast:
+        ch_cmd += ["--in", str(fast_data_root / "sim_v2" / "seed_42")]
+        ar_cmd += ["--in", str(fast_data_root / "sim_v1" / "seed_42"),
+                   "--out", str(out_dir / "data" / "features" / "target_features.h5")]
+    log.run(ch_cmd)
+    log.run(ar_cmd)
 
     # 5. 对比实验（正式 5 seeds；run_groups 内部已失败传播 -> 非零退出；
     #    Windows 本机退出期崩溃 0xC0000409 以产物哨兵兜底，见 RunLog）
+    #    F1 批3: 同步导出推理 bundle (ch_target_only_gru seed42 val-best) 供 5.5 自检
     log.step(f"P5 对比实验 (level=channel, {args.seeds} seed{'s' if args.seeds > 1 else ''})")
     groups_dir = out_dir / "groups"
     metrics_json = groups_dir / "all_metrics_phased_array.json"
-    log.run([py, "-m", "src.experiments.run_groups", "--config", str(config_path),
+    bundle_dir = groups_dir / "inference_bundle"
+    log.run([py, "-m", "src.experiments.run_groups", "--config", str(run_cfg_path),
              "--seeds", str(args.seeds), "--level", "channel",
+             "--export-inference-dir", str(bundle_dir),
              "--output-dir", str(groups_dir)], sentinel=metrics_json)
     all_metrics = json.loads(metrics_json.read_text("utf-8"))
+
+    # 5.5 推理 bundle 自检 (F1 批3 依赖闭合: 导出→重建→预测→schema 校验, 失败即失败)
+    import yaml
+    cfg_doc = yaml.safe_load(run_cfg_path.read_text("utf-8"))
+    ch_h5 = ROOT / cfg_doc["channel_level"]["feature_path"]
+    log.step("P5.5 推理 bundle 自检 (predict_gru, limit 4 通道)")
+    pred_dir = out_dir / "inference"
+    log.run([py, "-m", "component.predict_gru",
+             "--features", str(ch_h5), "--bundle-dir", str(bundle_dir),
+             "--output", str(pred_dir), "--stride", "50", "--limit-channels", "4"])
+    rul_pred = json.loads((pred_dir / "rul_prediction.json").read_text("utf-8"))
+    log.log(f"rul_prediction: {len(rul_pred['predictions'])} predictions, "
+            f"model={rul_pred['model']['group']} seed{rul_pred['model']['seed']}")
 
     # 6. 通道级基线（旧 entrypoint `|| echo` 吞错在此修复：失败即失败）
     log.step("P6 通道级非学习基线")
     baselines_path = out_dir / "baselines_channel.json"
-    log.run([py, "-m", "src.baselines.channel_baselines", "--config", str(config_path),
+    log.run([py, "-m", "src.baselines.channel_baselines", "--config", str(run_cfg_path),
              "--out", str(baselines_path)])
     baselines = json.loads(baselines_path.read_text("utf-8"))
 
@@ -124,6 +181,8 @@ def main() -> int:
     for name, payload in baselines.items():
         if isinstance(payload, dict) and "rmse" in payload:
             metrics[f"baseline.{name}.rmse"] = round(float(payload["rmse"]), 6)
+    # F1 批3: 推理链自检产物计数 (>0 证明 bundle→predict_gru→schema 全链通)
+    metrics["inference.rul_predictions"] = float(len(rul_pred["predictions"]))
     if not metrics:
         log.log("!! 未提取到任何指标")
         raise SystemExit(1)

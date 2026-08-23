@@ -89,7 +89,9 @@ def main():
     cfg = load_config(args.config)
     ch = cfg["channel_level"]
     cal_seed = args.seed if args.seed is not None else int(ch["calibration_seed"])
-    cap_ratio = float(ch["rul_cap_ratio"])
+    # F1-A: channel_level.rul_cap_ratio 已从 config 删除 (v2 双字段改不吃 cap_ratio);
+    # 该脚本仍调 v1 build_channel_labels (需要 cap_ratio 参数), 故保留 0.35 语义作默认。
+    cap_ratio = float(ch.get("rul_cap_ratio", 0.35))
     deltas_base = dict(ch["delta_thresholds"])
     set_seed(cal_seed, cfg["reproducibility"]["deterministic"])
 

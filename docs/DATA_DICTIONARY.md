@@ -84,7 +84,8 @@ event_observed`）：由 `construct_labels` 派生，删失器件 RUL 为下界�
 | 标签 | 派生规则 | 派生位置 |
 |------|----------|----------|
 | 通道级 `z/hi_ch` | `z = max(dR/δR, dI/δI, dg/δg)`，δ = `channel_level.delta_thresholds`（R_DS 0.35 / I_DSS 0.20 / g_m 0.15 / P_out 0.20）；`hi = clip(z,0,1)` | `build_channel_hi.build_channel_labels` |
-| 通道级 `rul_ch` | 自当前窗到 z≥1 的窗数，封顶 0.35T；失效后截断（P0-1） | 同上 |
+| 通道级 `rul_ch`（v1 legacy，仅旧数据） | 自当前窗到 z≥1 的窗数，封顶 0.35T；失效后截断（P0-1） | 同上 |
+| 通道级 `rul_ch_windows` / `rul_ch_norm`（v2 默认） | `rul_ch_windows`=自当前窗到 z≥1 的绝对窗口数，失效后截断但不封顶；`rul_ch_norm`=`rul_ch_windows`/H（H=`rul_scale_windows`=11688，由 h5 元数据携带）；不再写旧 `rul_ch` | 同上（`build_channel_hi` v2 路径） |
 | 服务级 `hi_array` | `max(clip(HI_M, HI_SLL, HI_θ))`，HI=1 即多维服务越限 | `build_array_hi.build_features` |
 | 服务级 `damage_norm` | `damage / D_EOL`，D_EOL=0.5765 为 config 预固定物理常数（不遍历含 test 的 eol，P0-3） | 同上 |
 | 服务级 `rul` / `event_observed` | 失效=精确 RUL；未失效右删失（event=0，rul 为下界） | 同上 |

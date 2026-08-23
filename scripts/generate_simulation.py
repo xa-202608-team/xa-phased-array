@@ -24,6 +24,17 @@ DYNAMICS = {"on": "phased_array_subdose_v2", "off": "leo_coupled_v1"}
 TAG = {"on": "sim_v2", "off": "sim_v1"}
 
 
+def sim_dir_for(data_root: Path | str | None, subdose: str, seed: int) -> Path:
+    """仿真输出目录 (ROOT 相对或绝对): 默认 canonical 槽位; data_root 给定时重定向。
+
+    --fast 调试链必须用 --data-root 重定向, 避免小规模数据覆盖 canonical
+    200 轨迹冻结基线 (2026-08-23 F6 事故回归)。
+    """
+    if data_root is None:
+        return Path("data/simulated/phased_array") / TAG[subdose] / f"seed_{seed}"
+    return Path(data_root) / TAG[subdose] / f"seed_{seed}"
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as f:
@@ -38,6 +49,9 @@ def main() -> int:
     ap.add_argument("--n_traj", type=int, default=None)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--fast", action="store_true", help="小规模 smoke (4 轨迹/1 年)")
+    ap.add_argument("--data-root", default=None,
+                    help="仿真输出根目录 (默认 data/simulated/phased_array; "
+                         "--fast 隔离用, 避免覆盖 canonical 槽位)")
     ap.add_argument("--manifest", default=None, help="sim_manifest.json 输出路径")
     args = ap.parse_args()
 
@@ -53,27 +67,38 @@ def main() -> int:
             cmd.append("--fast")
         elif args.n_traj:
             cmd += ["--n_traj", str(args.n_traj)]
-        print(f">> 运行: {' '.join(cmd)}")
+        out_subdir = sim_dir_for(args.data_root, subdose, args.seed)
+        cmd += ["--out", str(out_subdir)]
+        print(f">> 运行: {' '.join(cmd)}", flush=True)
         subprocess.run(cmd, cwd=ROOT, check=True)
 
-        sim_dir = ROOT / "data/simulated/phased_array" / TAG[subdose] / f"seed_{args.seed}"
+        sim_dir = ROOT / out_subdir
         h5 = sim_dir / "phased_array_all.h5"
         if not h5.is_file():
             print(f"!! 仿真输出缺失: {h5}")
             return 1
+        try:
+            dir_rel = sim_dir.relative_to(ROOT)
+        except ValueError:                     # data_root 在 ROOT 外 (如绝对路径挂载)
+            dir_rel = sim_dir
         entries.append({
             "subdose": subdose,
             "tag": TAG[subdose],
             "dynamics_id": DYNAMICS[subdose],
             "seed": args.seed,
-            "output_dir": str(sim_dir.relative_to(ROOT)),
-            "h5": str(h5.relative_to(ROOT)),
+            "output_dir": str(dir_rel),
+            "h5": str(dir_rel / "phased_array_all.h5"),
             "h5_sha256": _sha256(h5),
             "h5_size_bytes": h5.stat().st_size,
         })
 
+    # config 可能是 reproduce 派生到输出目录 (ROOT 外) 的副本, relative_to 失败时记绝对路径
+    try:
+        _cfg_rel = str(config_path.relative_to(ROOT))
+    except ValueError:
+        _cfg_rel = str(config_path)
     manifest = {
-        "config": str(config_path.relative_to(ROOT)),
+        "config": _cfg_rel,
         "config_sha256": config_sha,
         "seed": args.seed,
         "fast": bool(args.fast),

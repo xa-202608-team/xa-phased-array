@@ -120,7 +120,14 @@ def main() -> int:
     v3_path = ROOT / cfg["pretrain"]["source_feature_path"]
     delta_r_src = float(cfg["source"]["failure"]["RDS_delta_threshold"])
 
-    report: dict = {"config": str(Path(args.config).resolve().relative_to(ROOT)),
+    # config 可能是 reproduce_judge/full 派生到输出目录 (ROOT 外, 如容器 /outputs) 的副本,
+    # relative_to 失败时如实记录绝对路径
+    _cfg_path = Path(args.config).resolve()
+    try:
+        _cfg_rel = str(_cfg_path.relative_to(ROOT))
+    except ValueError:
+        _cfg_rel = str(_cfg_path)
+    report: dict = {"config": _cfg_rel,
                     "canonical_path": str(canonical_path.relative_to(ROOT))}
 
     if canonical_path.is_file():

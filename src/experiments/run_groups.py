@@ -43,7 +43,8 @@ from src.transfer.train_transfer import (                                      #
     load_target, load_source)
 from src.transfer.channel_dataset import (                                     # noqa: E402  (T6.3 channel level)
     ChannelSeqDataset, load_target_channel, apply_kshot_mask,
-    sample_kshot_trajectories, assert_split_by_trajectory)
+    sample_kshot_trajectories, assert_split_by_trajectory,
+    read_channel_label_meta, CHANNEL_LABEL_SCHEMA_V2)
 from src.train.pretrain import _rul_loss                                       # noqa: E402  (P0-2 失效/删失分流)
 from src.baselines.physical_extrap import evaluate_physical, phm_score, mae as mae_fn   # noqa: E402
 from src.baselines.phased_array_baselines import evaluate_phased_array_baselines        # noqa: E402
@@ -131,6 +132,29 @@ LABELS = {
     "timesfm_lora_xreg":        "TimesFM + LoRA + XReg *(PA7)*",
     "main_timesfm_fusion":      "主模型 + TimesFM 融合 *(PA7)*",
 }
+
+
+def _resolve_rul_scale(level, channel_cfg, transfer_cfg):
+    """RUL 归一尺度策略 (F1 收口, channel_label_v2)。
+
+    返回 (factor, scale_windows):
+      - channel + channel_cfg["rul_scale_policy"]=="mission_horizon":
+            factor=1.0 (build_channel_hi 已把标签除以全局 H, run_groups 不再二次除
+            transfer.rul_max_norm=4088, 避免双重重归一); scale_windows=H。
+      - channel + legacy_cap (旧 v1 路径) 或 service: factor=transfer.rul_max_norm
+            (旧路径沿用跨 seed 固定上限, 兼容旧数据)。
+    """
+    if level == "channel" and channel_cfg.get("rul_scale_policy") == "mission_horizon":
+        from src.sim.build_channel_hi import compute_mission_horizon_windows
+        H = compute_mission_horizon_windows(
+            duration_years=float(channel_cfg.get("mission_horizon_years", transfer_cfg.get(
+                "mission_horizon_years", 8.0))),
+            sample_period_s=float(channel_cfg.get("mission_sample_period_s", transfer_cfg.get(
+                "sample_period_s", 21600.0))))
+        return 1.0, float(H)
+    if "rul_max_norm" in transfer_cfg:
+        return float(transfer_cfg["rul_max_norm"]), float(transfer_cfg["rul_max_norm"])
+    return None, None
 
 
 def _alpha_from_group(group_name):
@@ -250,10 +274,11 @@ def _run_one_task(task):
     run_one_group 自带 set_seed + reset_global_memory_bank, 多进程下 RNG 与
     MMD bank 均为进程私有 → 与串行行为一致 (顺序无关, 逐位等价)。
     """
-    (mode, seed, cfg, smoke, enc_ov, component, tag_name, level, k_shot) = task
+    (mode, seed, cfg, smoke, enc_ov, component, tag_name, level, k_shot,
+     export_spec) = task
     return run_one_group(mode, seed, cfg, smoke=smoke, encoder_override=enc_ov,
                          component=component, group_name=tag_name, level=level,
-                         k_shot=k_shot)
+                         k_shot=k_shot, export_spec=export_spec)
 
 
 def _load_jsonl_records(jsonl_path):
@@ -321,14 +346,97 @@ def _resolve_group(group_name, cfg):
 
 
 def _build_model(cfg, n_features, n_target, device, encoder_override=None):
-    mc = cfg["model"]
-    tc = cfg["transfer"]
-    enc = encoder_override or mc["encoder"]
-    return TransferModel(
-        encoder_type=enc, n_features=n_features, n_target=n_target,
-        channels=mc["tcn"]["channels"], kernel_size=mc["tcn"]["kernel_size"],
-        num_blocks=mc["tcn"]["num_blocks"], dropout=mc["tcn"]["dropout"],
-        latent_dim=mc["latent_dim"], adapter_hidden=tc["adapter_hidden"]).to(device)
+    # F1 收口: 委托唯一构造函数, 与导出器/predict_gru 零漂移 (src/models/factory.py)
+    from src.models.factory import build_transfer_model
+    return build_transfer_model(cfg, n_features=n_features, n_target=n_target,
+                                encoder_type=encoder_override, device=device)
+
+
+# F1 批3: 推理 bundle 契约版本 (component/predict_gru.py 按此识别)
+INFERENCE_BUNDLE_SCHEMA = "channel-inference-bundle-v1"
+
+
+def _bundle_git_commit() -> str:
+    """bundle.json 的 git 溯源: XA_GIT_COMMIT 覆盖 (Docker 导出环境) > git rev-parse。
+
+    与 scripts/reproduce_judge._git_commit 同模式; 取不到即报错 (bundle 不允许无溯源)。
+    """
+    import os
+    import subprocess as _sp
+    env = os.environ.get("XA_GIT_COMMIT", "").strip()
+    if len(env) == 40 and all(c in "0123456789abcdef" for c in env):
+        return env
+    try:
+        out = _sp.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT,
+                               stderr=_sp.DEVNULL)
+        commit = out.decode().strip()
+        if len(commit) == 40:
+            return commit
+    except (OSError, _sp.CalledProcessError):
+        pass
+    raise RuntimeError(
+        "无法确定 git_commit (bundle 溯源必需); 导出环境请设置 XA_GIT_COMMIT=<40 位 hex>")
+
+
+def export_inference_bundle(model, export_dir, *, cfg, component, group_name, seed,
+                            encoder, ch_meta, feature_mean, feature_std,
+                            drop_features, metrics, L, n_features, n_target):
+    """F1 批3: 导出 EXPLICIT 推理 bundle (model.pt + bundle.json)。
+
+    调用点在 _train_with_early_stop 恢复 val-best 权重之后 → 导出的必是早停最佳。
+    bundle.json 自洽携带 factory 重建模型所需的全部架构参数 + 目标域 z-score 统计量
+    + RUL 尺度元数据 (v2: H/sample_period_s, h5 attrs 唯一真源), 推理侧
+    (component/predict_gru.py) 不依赖训练 config。仅支持 channel_label_v2。
+    torch.save/json 写盘不消耗 RNG, 不影响同批其他组-seed 的可复现性。
+    """
+    from datetime import datetime, timezone
+    from src.sim.build_channel_hi import CANONICAL_COLS
+    if ch_meta.get("channel_label_schema") != CHANNEL_LABEL_SCHEMA_V2:
+        raise ValueError(
+            f"inference bundle 仅支持 {CHANNEL_LABEL_SCHEMA_V2} "
+            f"(得 {ch_meta.get('channel_label_schema')}); 旧 v1 h5 请先重建")
+    export_dir = Path(export_dir)
+    export_dir.mkdir(parents=True, exist_ok=True)
+    mc, tc = cfg["model"], cfg["transfer"]
+    gru_cfg = mc.get("gru", {})
+    kept = [c for c in CANONICAL_COLS if c not in (drop_features or [])]
+    bundle = {
+        "bundle_schema": INFERENCE_BUNDLE_SCHEMA,
+        "component": component,
+        "group": group_name,
+        "seed": int(seed),
+        "encoder": encoder,
+        "input_len_L": int(L),
+        "feature_names": kept,
+        "n_features": int(n_features),       # 源域 canonical 维 (encoder 输入)
+        "n_target": int(n_target),           # 目标域 x_ch 维 (drop 后)
+        "model": {
+            "tcn": {k: mc["tcn"][k] for k in
+                    ("channels", "kernel_size", "num_blocks", "dropout")},
+            "latent_dim": mc["latent_dim"],
+            "adapter_hidden": tc["adapter_hidden"],
+            "gru": {"hidden": int(gru_cfg.get("hidden", 64)),
+                    "num_layers": int(gru_cfg.get("num_layers", 2)),
+                    "dropout": float(gru_cfg.get("dropout", mc["tcn"]["dropout"]))},
+        },
+        "normalizer": {"mean": [float(v) for v in np.asarray(feature_mean).ravel()],
+                       "std": [float(v) for v in np.asarray(feature_std).ravel()]},
+        "rul": {"channel_label_schema": ch_meta["channel_label_schema"],
+                "rul_scale_windows": float(ch_meta["rul_scale_windows"]),
+                "sample_period_s": float(ch_meta["sample_period_s"])},
+        "metrics": {"val_rmse": float(metrics.get("val_rmse", float("nan"))),
+                    "test_rmse": float(metrics.get("rmse", float("nan"))),
+                    "test_phm": float(metrics.get("phm", float("nan")))},
+        "git_commit": _bundle_git_commit(),
+        "exported_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    torch.save(model.state_dict(), export_dir / "model.pt")
+    (export_dir / "bundle.json").write_text(
+        json.dumps(bundle, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8")
+    print(f"  [export-inference] bundle -> {export_dir} "
+          f"({group_name} seed{seed}, val_rmse={bundle['metrics']['val_rmse']:.4f})")
+    return export_dir
 
 
 def _train_epoch(model, loader, opt, device, huber, mse, lam,
@@ -462,7 +570,8 @@ def _train_with_early_stop(model, ltr, lva, opt, device, huber, mse, lam, e, tag
 
 
 def run_one_group(mode, seed, cfg, smoke=False, encoder_override=None,
-                  component="wheel", group_name=None, level="service", k_shot=None):
+                  component="wheel", group_name=None, level="service", k_shot=None,
+                  export_spec=None):
     set_seed(seed, cfg["reproducibility"]["deterministic"], cfg["reproducibility"]["cudnn_benchmark"])
     reset_global_memory_bank()          # 任务 1: 每 run 清全局 MMD bank, 防跨 seed/group 累积污染
     L = int(cfg["model"]["input_len_L"])
@@ -485,6 +594,10 @@ def run_one_group(mode, seed, cfg, smoke=False, encoder_override=None,
         target_h5 = ROOT / ch_cfg["feature_path"]
         if not target_h5.exists():
             raise FileNotFoundError(f"channel level 缺 {target_h5}; 先 build_channel_hi")
+        # F1-A: H 由 h5 attrs 唯一提供 (build_channel_hi 是唯一计算者); 不重算, config 漂移即 fail
+        import h5py
+        with h5py.File(target_h5, "r") as _fh:
+            ch_meta = read_channel_label_meta(_fh)
         xT, hiT, rulT, ckT, tidT, evT, lbT, n_traj, sidT = load_target_channel(
             target_h5, drop_features=tc.get("ablation_drop_features"))
         canonical_path = cfg["pretrain"].get(
@@ -543,14 +656,40 @@ def run_one_group(mode, seed, cfg, smoke=False, encoder_override=None,
         return np.isin(tidT, ids)
 
     # P1-2: RUL 归一因子用 config 固定物理上限 (跨 seed 可比); 缺失回退 train-only max
-    if "rul_max_norm" in tc:
-        rul_max = float(tc["rul_max_norm"])
+    # F1-A: channel v2 → loader 已读 rul_ch_norm (=窗口数/H, 由 h5 元数据锁定尺度),
+    #   factor=1.0 不二次除, H 从 ch_meta 取 (build_channel_hi 唯一计算者, 不重算);
+    # channel v1 (legacy) → rul_ch 为窗口数, factor=rul_max_norm;
+    # service (旧服务级) → factor=rul_max_norm。
+    if level == "channel":
+        if ch_meta["channel_label_schema"] == CHANNEL_LABEL_SCHEMA_V2:
+            rul_factor = 1.0
+            rul_scale_windows = ch_meta["rul_scale_windows"]
+            print(f"  [rul-scale] channel v2: factor=1.0, H={rul_scale_windows} "
+                  f"(loader 已归一, 不二次除)")
+        else:
+            # channel v1 (legacy): rul_ch 为窗口数, 按 transfer.rul_max_norm(4088) 归一
+            # (不再调 _resolve_rul_scale — 那按 config policy 读, 若默认 config 指向 v1 h5
+            #  会拿到 factor=1.0 让未归一标签进模型; 此处直接按数据 schema 取服务上限)
+            rul_factor = float(tc["rul_max_norm"])
+            rul_scale_windows = rul_factor
     else:
+        # 服务级 (cross_level_transfer / 旧 PA6): 尺度从 service_level 段读 (F1-A 拆出),
+        # 回退 transfer.rul_max_norm 兼容 (飞轮/旧 config)
+        svc = cfg.get("service_level", {})
+        if "rul_scale_windows" in svc:
+            rul_factor = float(svc["rul_scale_windows"])
+            rul_scale_windows = rul_factor
+        else:
+            # 飞轮 wheel config 无 channel_level 段: 用 .get 取默认 {} (_resolve_rul_scale
+            # 对非 channel 层级本不读它, 只是传参默认)
+            rul_factor, rul_scale_windows = _resolve_rul_scale(
+                level, cfg.get("channel_level", {}), tc)
+    if rul_factor is None:
         rul_max_train = float(rulT[mask(tr)].max())     # 回退 (跨 seed 不可比, 仅兼容旧 config)
-        rul_max = rul_max_train
-        print(f"  [warning] config 未设 transfer.rul_max_norm, 回退 train-only max={rul_max:.1f}")
-    rulT = rulT / max(rul_max, 1.0)
-    lbT = lbT / max(rul_max, 1.0)
+        rul_factor = rul_max_train
+        print(f"  [warning] 无 rul 尺度策略, 回退 train-only max={rul_max_train:.1f}")
+    rulT = rulT / max(rul_factor, 1.0)
+    lbT = lbT / max(rul_factor, 1.0)
 
     # 任务 3: 源 MMD 对齐窗只用 source train 器件 (val 器件不参与迁移对齐)
     _src_tr = np.asarray(splitS) == "train"
@@ -698,9 +837,22 @@ def run_one_group(mode, seed, cfg, smoke=False, encoder_override=None,
     m["seed"] = seed
     m["encoder"] = enc
     m["level"] = level
+    # F2 收口: 记录本臂标签归一尺度 (channel v2=H=11688 / service=4088), 供跨层级
+    # level_control 在绝对窗口口径下配对 (归一口径跨层级不可比, 尺度混用禁令)
+    m["rul_scale_windows"] = float(rul_scale_windows)
     # A1 预注册纪律: α 只在 train/val 上选 — 所有组记录 val_rmse (eval_test 同口径,
     # 仅失效轨迹), 端点臂 (random/source) 重跑时同样带上, α 选择集 {0,0.05,0.1,0.25,0.5,1} 全覆盖
     m["val_rmse"] = eval_test(model, lva, device)["rmse"]
+    # F1 批3: EXPLICIT bundle 导出 (仅匹配组-seed; 此刻权重=val-best, 归一统计量/尺度
+    # 元数据均在作用域; smoke 也允许导出供链路自检, 正式数字以非 smoke 跑为准)
+    if (export_spec is not None and level == "channel"
+            and group_name == export_spec["group"] and seed == export_spec["seed"]):
+        export_inference_bundle(
+            model, export_spec["dir"], cfg=cfg, component=component,
+            group_name=group_name, seed=seed, encoder=enc, ch_meta=ch_meta,
+            feature_mean=_fm, feature_std=_fs,
+            drop_features=tc.get("ablation_drop_features"), metrics=m,
+            L=L, n_features=featsS.shape[1], n_target=xT.shape[1])
     if _alpha is not None:
         m["alpha"] = _alpha
     if _layerwise_depth is not None:
@@ -786,6 +938,7 @@ def aggregate(by, primary_source_group=None):
     # T6.3: 优先 ch_* 版本 (M7 通道级), 回退旧组 (PA6 服务级)
     init_ctrl = None
     for _src_fg, _rf in [("ch_source_pretrain_frozen_kall", "ch_random_frozen_kall"),
+                         ("ch_source_pretrain_frozen", "ch_random_frozen"),   # F2: 无 k-shot 正式跑裸名回退
                          ("source_pretrain_finetune", "random_frozen")]:
         if _src_fg in by and _rf in by:
             _by_s = {m["seed"]: m["rmse"] for m in by[_src_fg]}
@@ -795,6 +948,7 @@ def aggregate(by, primary_source_group=None):
     # GPT §3 归因: source_mmd_physics (源ckpt+S3全微调) vs random_full_finetune (随机+S3全微调), 唯一差别=源 ckpt
     full_ctrl = None
     for _sm, _rf in [("ch_source_mmd_physics_kall", "ch_random_full_finetune_kall"),
+                     ("ch_source_mmd_physics", "ch_random_full_finetune"),   # F2: 裸名回退
                      ("source_mmd_physics", "random_full_finetune")]:
         if _sm in by and _rf in by:
             _by_m = {m["seed"]: m["rmse"] for m in by[_sm]}
@@ -804,6 +958,7 @@ def aggregate(by, primary_source_group=None):
     # GPT §3 P0-2: random_full_finetune (随机+S3+MMD) vs random_nommd (随机+S3 无MMD), 唯一差别=MMD
     mmd_ctrl = None
     for _mmd, _nomd in [("ch_random_full_finetune_kall", "ch_random_nommd_kall"),
+                        ("ch_random_full_finetune", "ch_random_nommd"),      # F2: 裸名回退
                         ("random_full_finetune", "random_nommd")]:
         if _mmd in by and _nomd in by:
             _by_mmd = {m["seed"]: m["rmse"] for m in by[_mmd]}
@@ -824,18 +979,37 @@ def aggregate(by, primary_source_group=None):
     # T6.4 level_control (M7 通道级矩阵核心论证量): 同 source ckpt + 同统计口径,
     # 唯一变量 = 迁移接口层级 (channel 器件层 vs service 服务层)。
     # level_control = service_rmse − channel_rmse (per-seed paired)
-    #   正 → channel level 更优 (RMSE 更低, 预期: 器件层迁移接口更匹配 source 层级)
-    #   负 → service level 更优
+    #   正 → channel level 更优 (RMSE 更低); 负 → service level 更优
+    # F2 收口: ① 组名回退 — k-shot 跑用 *_kall 后缀, 无 k-shot 正式跑用裸名 (旧硬编码
+    # _kall 在正式跑配不上对 → CI 静默 None, 已修); ② 尺度统一 — channel v2 标签 ÷H(11688)
+    # 与 service 标签 ÷4088 归一口径不同, 直接比归一 RMSE 是尺度混用, 配对在**绝对窗口数**
+    # 口径进行 (rmse × 各臂记录的 rul_scale_windows), scales 随结果落盘供审计。
+    def _group_scale(mtrs):
+        scales = {m.get("rul_scale_windows") for m in mtrs}
+        scales.discard(None)
+        if len(scales) != 1:
+            return None                      # 缺记录或组内尺度不一致 → 放弃转换 (显式 None)
+        return float(next(iter(scales)))
+
     level_ctrl = None
-    ch_main = "ch_source_mmd_physics_kall"
-    svc_main = "cross_level_transfer"
-    if ch_main in by and svc_main in by:
-        level_ctrl = _paired_delta_ci(
-            {m["seed"]: m["rmse"] for m in by[svc_main]},   # target = service
-            {m["seed"]: m["rmse"] for m in by[ch_main]})    # source = channel
-        # _paired_delta_ci 返回 delta = target − source = service − channel
+    _lc_extra = {}
+    ch_main = next((g for g in ("ch_source_mmd_physics_kall", "ch_source_mmd_physics")
+                    if g in by), None)
+    svc_main = "cross_level_transfer" if "cross_level_transfer" in by else None
+    if ch_main and svc_main:
+        ch_scale, svc_scale = _group_scale(by[ch_main]), _group_scale(by[svc_main])
+        if ch_scale and svc_scale:
+            level_ctrl = _paired_delta_ci(
+                {m["seed"]: m["rmse"] * svc_scale for m in by[svc_main]},   # service → 窗口
+                {m["seed"]: m["rmse"] * ch_scale for m in by[ch_main]})     # channel → 窗口
+            _lc_extra = {"unit": "windows", "channel_scale": ch_scale,
+                         "service_scale": svc_scale}
+        else:
+            # 旧记录缺 rul_scale_windows (回填前) — 不做跨尺度比较, 显式标注原因
+            _lc_extra = {"unit": "normalized_incomparable",
+                         "reason": "缺 rul_scale_windows 记录, 拒绝跨尺度配对"}
     agg["_level_control"] = {"channel_group": ch_main, "service_group": svc_main,
-                             "paired": level_ctrl}
+                             "paired": level_ctrl, **_lc_extra}
     # T6.2 k-shot 维度: 对每个 k 算 transfer_gain = ch_target − ch_source_mmd_physics
     k_shot_stats = {}
     for g in agg:
@@ -1046,6 +1220,7 @@ def write_results(agg, physical, path, smoke, n_seeds, group_names, component,
     if _lc and _lc.get("paired") is not None:
         _ps = _lc["paired"]
         _expl = " [探索性分析, n<10 不作确认性结论]" if _ps["exploratory_only"] else ""
+        _unit = {"windows": " (绝对窗口数口径)"}.get(_lc.get("unit", ""), "")
         # delta = service − channel: 正 → channel 更优 (RMSE 更低); 负 → service 更优
         if _ps["ci_crosses_zero"]:
             _sig = "无显著差异 (CI 跨 0)"
@@ -1054,13 +1229,16 @@ def write_results(agg, physical, path, smoke, n_seeds, group_names, component,
         else:
             _sig = "service level 显著更优 (CI 全负侧)"
         lines.append(
-            f"- **level_control** ({_lc['service_group']} − {_lc['channel_group']}, per-seed paired){_expl}: "
-            f"Δ={_ps['delta_mean']:+.4f} ± {_ps['delta_std']:.4f}, "
-            f"95% CI [{_ps['ci95_lo']:+.4f}, {_ps['ci95_hi']:+.4f}] → {_sig}\n"
+            f"- **level_control** ({_lc['service_group']} − {_lc['channel_group']}, per-seed paired){_unit}{_expl}: "
+            f"Δ={_ps['delta_mean']:+.1f} ± {_ps['delta_std']:.1f}, "
+            f"95% CI [{_ps['ci95_lo']:+.1f}, {_ps['ci95_hi']:+.1f}] → {_sig}\n"
         )
         lines.append(
-            "  - 语义: 唯一变量=迁移接口层级 (channel 器件层 vs service 服务层), "
-            "同 source ckpt + 同统计口径; 正向=channel 层级选对了 (器件层迁移接口匹配 source)\n"
+            "  - 口径: channel 标签 ÷H=" + str(_lc.get("channel_scale", "?")) +
+            ", service 标签 ÷" + str(_lc.get("service_scale", "?")) +
+            ", 归一口径不同 → 配对在绝对窗口数 (rmse×各自尺度) 进行; "
+            "两级标签定义不同 (channel=器件级 z≥1 / service=多维服务越限), "
+            "差异含任务视界差, 仅作层级方向参考\n"
         )
     # T6.2 k-shot 维度: 各 k 的 RMSE 表 (迁移随少样本变化)
     _ks = agg.get("_k_shot_rmse", {})
@@ -1108,6 +1286,14 @@ def main():
                          "与外部实验共存时按显存余量选 (如 --workers 2)")
     ap.add_argument("--threads-per-worker", type=int, default=4,
                     help="每 worker 进程 torch CPU 线程上限 (默认 4); 防 多进程×全核线程 资源爆炸")
+    ap.add_argument("--export-inference-dir", default=None,
+                    help="F1 批3: 导出推理 bundle (model.pt + bundle.json) 到该目录; "
+                         "导出组/种子默认取 config experiments.primary_model_group / config seed "
+                         "(正式口径 = ch_target_only_gru seed42 val-best)")
+    ap.add_argument("--export-inference-group", default=None,
+                    help="覆盖导出组 (默认 config experiments.primary_model_group)")
+    ap.add_argument("--export-inference-seed", type=int, default=None,
+                    help="覆盖导出种子 (默认 config seed, 如 42)")
     args = ap.parse_args()
     # P0-2: 产物持久化 — --output-dir 指定产物目录 (Docker 挂载可回收); None=旧位置 (docs/ + checkpoints/)
     out_dir = Path(args.output_dir) if args.output_dir else None
@@ -1148,6 +1334,18 @@ def main():
     by = {}   # group_name (或 group_name+k=..) -> [metrics]
     _failures = []   # P0-2: 失败传播 — 记录所有失败臂, main 末尾任一失败则 sys.exit(1)
 
+    # F1 批3: 推理 bundle 导出规格 (run_one_group 内按 组-seed 精确匹配触发)
+    export_spec = None
+    if args.export_inference_dir:
+        _exp_group = args.export_inference_group or exp_cfg.get("primary_model_group")
+        _exp_seed = (args.export_inference_seed if args.export_inference_seed is not None
+                     else int(cfg["seed"]))
+        if not _exp_group:
+            ap.error("--export-inference-dir 需导出组: --export-inference-group 或 "
+                     "config experiments.primary_model_group")
+        export_spec = {"dir": Path(args.export_inference_dir),
+                       "group": _exp_group, "seed": _exp_seed}
+
     # 任务收集: (mode, seed, cfg, smoke, enc_ov, component, tag_name, level, k_shot)
     tasks = []
     for gname in group_names:
@@ -1175,7 +1373,18 @@ def main():
             for s in range(n_seed):
                 seed = cfg["seed"] + s
                 tasks.append((mode, seed, cfg, args.smoke, enc_ov, component,
-                              tag_name, level, k_shot))
+                              tag_name, level, k_shot, export_spec))
+
+    # F1 批3: 导出组-seed 必须落在本次任务集且为 channel level (bundle 仅通道级 v2)
+    if export_spec is not None:
+        _match = [t for t in tasks if t[6] == export_spec["group"]
+                  and t[1] == export_spec["seed"]]
+        if not _match:
+            ap.error(f"导出组-seed {export_spec['group']}/seed{export_spec['seed']} "
+                     "不在本次任务集 (检查 --groups / --k-shot 后缀 / --seeds 范围)")
+        if any(t[7] != "channel" for t in _match):
+            ap.error(f"导出组 {export_spec['group']} 须为 channel level "
+                     "(推理 bundle 仅支持通道级 v2)")
 
     # 增量落盘 + 恢复: jsonl 记录已完成 组-seed, 中断重启只补缺口 (2026-08-18 事故加固);
     # 旧记录须重载入 by 聚合器 (GPT 四审+1 修正) — 只跳过不重载会让恢复跑的
@@ -1193,6 +1402,20 @@ def main():
                 _n_reloaded += 1
         print(f">> [resume] {jsonl_path}: 旧记录 {_n_reloaded} 条重载入聚合器, "
               f"剩余重跑 {len(tasks)}/{_n_total}")
+
+    # F1 批3: resume 把导出臂跳过时, bundle 必须已在盘上 (本轮早前导出) — 缺失才显式
+    # 失败; bundle 在则续跑聚合, 不重训已完成臂 (jsonl 增量恢复正是为此场景加固)
+    if export_spec is not None and not any(
+            t[6] == export_spec["group"] and t[1] == export_spec["seed"] for t in tasks):
+        _bundle_ok = ((Path(export_spec["dir"]) / "bundle.json").is_file()
+                      and (Path(export_spec["dir"]) / "model.pt").is_file())
+        if _bundle_ok:
+            print(f">> [export-inference] 导出臂 {export_spec['group']}/seed{export_spec['seed']} "
+                  f"已被 resume 跳过, 沿用盘上已有 bundle: {export_spec['dir']}")
+        else:
+            print(f"!! 导出臂 {export_spec['group']}/seed{export_spec['seed']} 已被 resume "
+                  f"跳过且 bundle 缺失; 请换新 --output-dir 或删该行 jsonl")
+            sys.exit(1)
 
     def _record(m):
         by[m["group"]].append(m)
@@ -1218,11 +1441,12 @@ def main():
                     print(f"!! {t[6]} seed{t[1]} 失败: {exc}")
                     _failures.append(f"{t[6]}/seed{t[1]}: {exc}")   # P0-2: 计数, main 末尾非零退出
     else:
-        for mode, seed, _cfg, smoke, enc_ov, comp, tag_name, level, k_shot in tasks:
+        for mode, seed, _cfg, smoke, enc_ov, comp, tag_name, level, k_shot, _exp in tasks:
             try:
                 m = run_one_group(mode, seed, cfg, smoke=smoke,
                                   encoder_override=enc_ov, component=comp,
-                                  group_name=tag_name, level=level, k_shot=k_shot)
+                                  group_name=tag_name, level=level, k_shot=k_shot,
+                                  export_spec=_exp)
                 _record(m)
             except Exception as exc:    # noqa: BLE001
                 print(f"!! {tag_name} seed{seed} 失败: {exc}")
