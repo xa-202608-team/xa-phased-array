@@ -28,6 +28,19 @@ from src.utils import load_config, set_seed            # noqa: E402
 CANONICAL_COLS = ["p_drift_norm", "T_dev_C", "duty", "drive_norm"]
 CANONICAL_SCHEMA = "device_canonical_v1"
 CHANNEL_LABEL_SCHEMA = "channel_label_v1"
+CHANNEL_LABEL_SCHEMA_V2 = "channel_label_v2"   # F1 收口: 统一任务视界 H 归一, 不截顶
+RUL_CAPPED_FALSE = "false"
+
+
+def compute_mission_horizon_windows(duration_years: float, sample_period_s: float) -> int:
+    """任务级统一物理视界 H（窗口数）。
+
+    F1 拍板 (GPT 评审 §RUL 口径): H = floor(duration_years×365.25×24×3600/sample_period_s)。
+    由仿真器实际时间派生, 不是硬编码 4088 (=0.35×视界), 也不是 per-轨迹 EOL 归一。
+    当前 config (8yr, 21600s) → floor(8×31557600/21600) = 11688。
+    """
+    windows_per_year = 365.25 * 24 * 3600 / float(sample_period_s)
+    return int(float(duration_years) * windows_per_year)
 # sa_feat 列 (与 phased_array_sim _simulate_subdose / simulate 一致):
 # 0=mean_pow, 1=q10_pow, 2=IDSS, 3=Tj, 4=amp_rms, 5=phase_rms, 6=eff_ratio, 7=q90_f
 SA_COL_POWER = 0
@@ -73,6 +86,47 @@ def build_channel_labels(f_sub_s: np.ndarray, params: dict, deltas: dict,
         event, eol, keep
 
 
+def build_channel_labels_v2(f_sub_s: np.ndarray, params: dict, deltas: dict,
+                            H: int, cap_ratio: float | None = None):
+    """通道级标签 v2（F1 收口口径）。
+
+    与 v1 的差异（GPT 评审逐条裁定）:
+      - 失效通道: rul = (EOL − t)，不按 cap_ratio*T 截顶（0.35 是人为任务定义,
+        截顶会使早期样本成平台、削弱真实提前量学习）；
+      - 删失通道: rul = (T−1−t)（观测终点下界，窗口数）；
+      - 标签以**绝对窗口数**返回 (rul_windows)，调用方/写盘时再除以任务视界 H 得
+        rul_norm = rul_windows / H。H 是模型数值单位 (F1-A §9 例外), 非物理寿命分母。
+    其余 (z/hi/event/eol/keep, EOL 截断 P0-1 铁律) 与 v1 保持一致。
+
+    返回 (z, hi, rul_windows, event, eol, keep)，rul 为绝对窗口数 (float)。写盘时
+    同时存 rul_ch_windows (原值) 与 rul_ch_norm (/H)，消费者按用途读对应字段，
+    不再原地改变单一字段语义 (F1-A 修正门, 根除双归一)。
+    """
+    del cap_ratio  # v2 显式不截顶；参数保留占位以防调用方混淆
+    Delta_R = float(params["Delta_R"])
+    decay_I = float(params["decay_I"])
+    decay_g = float(params["decay_g"])
+    dR = (Delta_R - 1.0) * f_sub_s
+    dI = decay_I * f_sub_s
+    dg = decay_g * f_sub_s
+    z = np.maximum.reduce([dR / deltas["R_DS"], dI / deltas["I_DSS"], dg / deltas["g_m"]])
+    T = len(z)
+    hi = np.clip(z, 0.0, 1.0)
+    event = bool((z >= 1.0).any())
+    t = np.arange(T)
+    if event:
+        eol = int(np.argmax(z >= 1.0))
+        rul = (eol - t).astype(float)
+        rul[eol:] = 0.0
+        keep = eol + 1
+    else:
+        eol = T - 1
+        rul = (T - 1 - t).astype(float)
+        keep = T
+    return z.astype(np.float32), hi.astype(np.float32), rul[:keep].astype(np.float32), \
+        event, eol, keep
+
+
 def build_canonical_x(sa_feat_s: np.ndarray, duty: float, deltas: dict):
     """子阵 sa_feat (T,8) → canonical 4 维 x_ch (T,4)。
 
@@ -105,8 +159,17 @@ def main():
     cfg = load_config(args.config)
     ch = cfg["channel_level"]
     deltas = dict(ch["delta_thresholds"])
-    cap_ratio = float(ch["rul_cap_ratio"])
+    cap_ratio = float(ch.get("rul_cap_ratio", 0.35))     # v1 兼容旧路径; v2 (mission_horizon) 不使用
     set_seed(cfg["seed"], cfg["reproducibility"]["deterministic"])
+
+    # F1 收口: channel_label_v2 统一任务视界 H（非 per-轨迹 EOL，非 0.35×视界）
+    rul_policy = ch.get("rul_scale_policy", "legacy_cap")
+    use_v2 = (rul_policy == "mission_horizon")
+    H_windows = None
+    if use_v2:
+        H_windows = compute_mission_horizon_windows(
+            duration_years=float(cfg["sim"]["duration_years"]),
+            sample_period_s=float(cfg["sim"]["sample_period_s"]))
 
     seed = cfg["seed"]
     indir = ROOT / (args.indir or f"data/simulated/phased_array/sim_v2/seed_{seed}")
@@ -128,7 +191,14 @@ def main():
         fout.attrs["canonical_schema"] = CANONICAL_SCHEMA
         fout.attrs["t_dev_unit"] = "degC"      # canonical 第1维 T_dev_C 单位 = sim Tj (Kelvin) − 273.15
         fout.attrs["t_dev_conversion"] = "subarray_features.Tj_K_minus_273.15"
-        fout.attrs["channel_label_schema"] = CHANNEL_LABEL_SCHEMA
+        fout.attrs["channel_label_schema"] = (CHANNEL_LABEL_SCHEMA_V2 if use_v2
+                                              else CHANNEL_LABEL_SCHEMA)
+        if use_v2:
+            # F1: 统一任务视界尺度, 消费者从 h5 读取, 不自算; 允许绝对窗口/小时还原本
+            fout.attrs["rul_capped"] = RUL_CAPPED_FALSE
+            fout.attrs["rul_scale_windows"] = float(H_windows)
+            fout.attrs["sample_period_s"] = float(cfg["sim"]["sample_period_s"])
+            fout.attrs["mission_horizon_windows"] = float(H_windows)
         fout.attrs["delta_thresholds"] = ",".join(f"{k}={v}" for k, v in deltas.items())
         for key in sorted(fin.keys()):
             g = fin[key]
@@ -163,14 +233,26 @@ def main():
             traj_id = int(key.split("_")[1])
             for s in range(n_sa):
                 f_s = f_sub[:, s]
-                z, hi, rul, event, eol, keep = build_channel_labels(
-                    f_s, params, deltas, cap_ratio)
+                if use_v2:
+                    z, hi, rul, event, eol, keep = build_channel_labels_v2(
+                        f_s, params, deltas, H=H_windows, cap_ratio=None)
+                else:
+                    z, hi, rul, event, eol, keep = build_channel_labels(
+                        f_s, params, deltas, cap_ratio)
                 x_ch = build_canonical_x(sa_feat[:keep, s, :], params["duty"], deltas)
                 sub_grp = traj_grp.create_group(f"sub_{s:02d}")
                 sub_grp.create_dataset("x_ch", data=x_ch)
                 sub_grp.create_dataset("hi_ch", data=hi[:keep])
                 sub_grp.create_dataset("z_ch", data=z[:keep])
-                sub_grp.create_dataset("rul_ch", data=rul)
+                if use_v2:
+                    # F1-A: 双字段 — rul_ch_windows 绝对窗口数 (物理解释/推理还原),
+                    # rul_ch_norm = /H (模型标签)。不写旧 rul_ch, 让遗留消费者 KeyError
+                    # 而非静默双归一。
+                    sub_grp.create_dataset("rul_ch_windows", data=rul)
+                    sub_grp.create_dataset(
+                        "rul_ch_norm", data=(rul / float(H_windows)).astype(np.float32))
+                else:
+                    sub_grp.create_dataset("rul_ch", data=rul)
                 sub_grp.attrs["event_observed"] = int(event)
                 sub_grp.attrs["eol_idx"] = eol
                 sub_grp.attrs["traj_id"] = traj_id
@@ -198,6 +280,9 @@ def main():
             print(f"median EOL_ch = {med_ch:.0f} vs median EOL_svc = {med_svc:.0f} "
                   f"(优雅降级 EOL_ch<EOL_svc: {'是' if med_ch < med_svc else '否'})")
         print("z=max(dR/δR,dI/δI,dg/δg); hi=clip(z,0,1); 第0维 p_drift_norm 与源域同语义")
+        if use_v2:
+            print(f"rul_label_schema = {CHANNEL_LABEL_SCHEMA_V2}: 不截顶, 统一任务视界 H={H_windows} "
+                  f"窗口归一 (~duration_years={cfg['sim']['duration_years']}yr), rul_scale_windows 已写 attrs")
         print("==========================\n")
 
 

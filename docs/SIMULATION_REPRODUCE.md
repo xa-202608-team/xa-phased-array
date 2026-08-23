@@ -29,6 +29,13 @@ python scripts/generate_simulation.py --n_traj 200 --seed 42 \
 python scripts/predict_telemetry.py --telemetry T.csv --metadata M.yaml \
     --telemetry-name array_gain_db --output outputs/predict
 
+# 3b) 通道级 GRU RUL 推理（F1 批3：消费 run_groups --export-inference-dir
+#     导出的 val-best bundle；无标签读 x_ch，输出 rul_prediction.json）
+python -m src.experiments.run_groups --level channel --export-inference-dir outputs/bundle ...
+python -m component.predict_gru \
+    --features data/features/phased_array/schema_ch_v1/target/channel_features.h5 \
+    --bundle-dir outputs/bundle --output outputs/inference --stride 50
+
 # 4) 评审用小规模端到端复现（仿真→HI→预测/基线→Schema 校验，CPU 分钟级）
 bash scripts/reproduce_judge.sh  --output outputs/judge     # 或 .ps1（同参数/退出码）
 # 5) 完整复现（200 轨迹 + 5 seeds；主步骤失败非零退出，已移除 || echo 吞错）
@@ -40,10 +47,10 @@ judge/full 产物（`--output` 目录）：
 | 文件 | 内容 |
 |------|------|
 | `manifest.json` | 契约 manifest.schema.json：git_commit、config_sha256、数据 SHA256、seeds、环境、elapsed、status=REPRODUCE_OK |
-| `metrics.json` | 契约 metrics.schema.json：本次运行实测指标（组 RMSE 均值 + 非学习基线），conclusion=NO_POSITIVE_TRANSFER_SUPPORTED（项目冻结结论，见 docs/MODELING.md §6） |
+| `metrics.json` | 契约 metrics.schema.json：本次运行实测指标（组 RMSE 均值 + 非学习基线），conclusion=NO_POSITIVE_TRANSFER_SUPPORTED（契约 v1.1 机器枚举；v0.3.0 公开叙事映射为 `NO_CONFIRMED_POSITIVE_TRANSFER`，见下方兼容说明与 docs/MODELING.md §6） |
 | `run.log` | 全步骤命令与输出 |
 | `REPRODUCE_OK` | 仅整条流程成功时写出的哨兵 |
-| `source_mode.txt` / `sim_manifest.json` / `predict/prediction.json` / `groups/` / `baselines_channel.json` | 各步骤产物 |
+| `source_mode.txt` / `sim_manifest.json` / `predict/prediction.json` / `groups/` / `groups/inference_bundle/` / `inference/rul_prediction.json` / `baselines_channel.json` | 各步骤产物（full 含 P5.5 推理自检） |
 
 **source_mode 语义**（`manifest.json` 因契约 schema 限制不设自定义字段，以
 `metrics.run_id`、`source_mode.txt` 与 `run.log` 标注，三者一致）：
@@ -51,6 +58,13 @@ judge/full 产物（`--output` 目录）：
 - `canonical_nasa` / `nasa_real`：真实 NASA MOSFET 源域（canonical H5 已就绪）；
 - `synthetic`：本地无真实源域，judge/full 走合成源域 smoke——**该模式结果
   只证明管线连通，不得与正式源域结果混用或对外引用为正式指标**。
+
+**契约枚举兼容说明**：`component-contract-v1.1.0` 的 `schemas/metrics.schema.json`
+仍使用机器枚举 `conclusion=NO_POSITIVE_TRANSFER_SUPPORTED`（judge/full 输出与
+Schema 快照、哈希测试均不修改）；v0.3.0 公开叙事中它**映射**为
+`NO_CONFIRMED_POSITIVE_TRANSFER`（现役口径见 `docs/MODELING.md` §6.0）。
+二者是同一结论的机器/公开两种表述，不构成两套科研结论，也不得据此回改契约
+快照或 reproduce 输出枚举。
 
 ## 3. 逐步复现（等价手动拆解）
 
@@ -71,13 +85,13 @@ SHA256 可交叉核对。
 
 ```bash
 docker build --build-arg XA_GIT_COMMIT=$(git rev-parse HEAD) \
-    [-t xa-phased-array:baseline-v0.1.0 .]        # GPU torch 默认; 无 GPU/NVIDIA 源不可达时加
+    [-t xa-phased-array:v0.3.0-rc.1 .]        # GPU torch 默认; 无 GPU/NVIDIA 源不可达时加
 #   --build-arg TORCH_EXTRA_INDEX=https://download.pytorch.org/whl/cpu 构建 CPU 变体
-docker run --rm xa-phased-array:baseline-v0.1.0 verify
+docker run --rm xa-phased-array:v0.3.0-rc.1 verify
 # 评审复现（canonical H5 与 ckpt 不烘焙进镜像，从只读挂载读取；缺失走 synthetic）：
 docker run --rm -v <host-out>:/outputs \
     [-v <host-canonical-dir>:/artifacts/data:ro -v <host-ckpt-dir>:/artifacts/checkpoints:ro] \
-    xa-phased-array:baseline-v0.1.0 reproduce_judge --output /outputs/judge
+    xa-phased-array:v0.3.0-rc.1 reproduce_judge --output /outputs/judge
 ```
 
 - `/artifacts/data`、`/artifacts/checkpoints`：只读挂载点（canonical H5 / 预训练
@@ -94,7 +108,13 @@ docker run --rm -v <host-out>:/outputs \
   退出码非零但期望产物 JSON 存在且可解析 → 记 WARNING 继续；产物缺失仍判失败。
   Linux/Docker/CI 无此现象。
 - `reproduce_full --fast` 为调试模式：默认单 seed（4 轨迹小样本下 0.15 train
-  比例遇个别种子会抽空，非正式语义）。
+  比例遇个别种子会抽空，非正式语义）。fast 与 `reproduce_judge` 的中间数据
+  （双仿真集/H5/特征）全部隔离在 `--output` 目录下（派生同名 `<stem>.yaml`
+  ——**必须沿用原 config 文件名**，`run_groups` 以 `Path(config).stem` 判定
+  组件分支与 source ckpt 名——加 `data/` 子树），**不写 canonical 数据槽位**
+  （2026-08-23 F6 修复：此前 fast/judge 曾覆盖 200 轨迹冻结基线与 canonical
+  特征，修复含 `generate_simulation --data-root` 与 `predict_gru
+  --limit-channels` 合格通道筛选回归测试）。
 
 ## 6. 冒烟基线证据
 

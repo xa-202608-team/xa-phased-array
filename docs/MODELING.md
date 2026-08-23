@@ -54,7 +54,7 @@
 
 | 层级 | 构造器 | 标签 |
 |------|--------|------|
-| 通道级（器件层，主线） | `src/sim/build_channel_hi.py` 读 sim_v2 | `z = max(dR/δR, dI/δI, dg/δg)`；`hi = clip(z,0,1)`；`rul` 封顶 0.35T；失效通道截断到 EOL（P0-1 铁律，丢弃 EOL 后零标签窗根除泄漏） |
+| 通道级（器件层，主线） | `src/sim/build_channel_hi.py` 读 sim_v2 | `z = max(dR/δR, dI/δI, dg/δg)`；`hi = clip(z,0,1)`；v2 双字段：`rul_ch_windows = EOL_ch − t`（删失为观测终点下界，**不做 0.35T 截顶**）、`rul_ch_norm = rul_ch_windows/H`（H=mission_horizon 统一任务视界=11688 窗，模型数值单位，非物理寿命比例）；失效通道截断到 EOL（P0-1 铁律，丢弃 EOL 后零标签窗根除泄漏） |
 | 服务级（层级消融） | `src/sim/build_array_hi.py` 读 sim_v1 | `HI = max(clip(HI_M, HI_SLL, HI_θ))`；`damage_norm = damage/D_EOL`（D_EOL 为 config 预固定物理常数 0.5765，不遍历含 test 的 eol——P0-3）；未失效轨迹右删失（`event_observed=0`，`rul` 为下界） |
 
 个体划分：按轨迹整体划分 train/val/test = 0.15/0.20/0.65（同一退化轨迹绝不跨
@@ -89,7 +89,36 @@ split）；源域按器件 leave-one-device-out。评估 RMSE/PHM/MAE 仅统计�
   主模型是"同分布多特征监督学习"，本入口是"零训练单遥测因果外推"，
   服务于在轨接入的健康趋势研判与基线锚点。
 
-## 6. 跨域迁移结论（冻结）：NO_POSITIVE_TRANSFER_SUPPORTED
+## 6. 跨域迁移结论（冻结）：NO_CONFIRMED_POSITIVE_TRANSFER
+
+> 机器枚举说明：契约 `component-contract-v1.1.0` 的 `metrics.schema.json` 仍使用
+> `conclusion=NO_POSITIVE_TRANSFER_SUPPORTED`（judge/full 输出与 Schema 快照不改）；
+> 它在 v0.3.0 公开叙事中映射为 `NO_CONFIRMED_POSITIVE_TRANSFER`——同一结论的
+> 机器/公开两种表述，不构成两套科研结论。
+
+### 6.0 现役权威数字（F2 v2，通道级 ch_target_only_gru 口径，5 seeds 42–46，H=11688）
+
+| 组 | RMSE（÷H，5 seeds） |
+|---|---|
+| ch_target_only_gru（主模型） | **0.1551 ± 0.0131** |
+| ch_target_only_tcn | 0.1927 ± 0.0254 |
+| ch_source_pretrain_frozen | 0.1693 ± 0.0151 |
+| ch_source_mmd_physics | 0.1693 ± 0.0145 |
+| ch_random_frozen | 0.1710 ± 0.0163 |
+| ch_random_full_finetune | 0.1691 ± 0.0148 |
+| ch_random_nommd | 0.1476 ± 0.0253 |
+
+全监督三项归因（配对 ΔRMSE，95% CI）：
+
+- init（source_pretrain_frozen − random_frozen）= **−0.0017 ± 0.0016**，CI [−0.0037, +0.0004] 跨 0；
+- full（source_mmd − random_full）= **+0.0002 ± 0.0069**，CI [−0.0083, +0.0088] 跨 0；
+- MMD（random_full − random_nommd）= **+0.0215 ± 0.0182**，CI [−0.0011, +0.0441] 跨 0。
+
+**结论**：全监督下源权重不可区分于随机初始化，无确认正迁移
+（`NO_CONFIRMED_POSITIVE_TRANSFER`）。非学习基线（同 v2 口径）：z_extrap 0.1588、
+similarity 0.1795、constant 0.2293、arrhenius 0.2945、particle_filter 0.6833——
+z_extrap 落在主模型 seed 波动带内。出处：`outputs/f2_formal_5seed/`（本地工件）、
+`results/public_summary.json`、`handoff/artifact-map.yaml`。
 
 > **⚠ 勘误（2026-08-17 迁移结论清零重审）**：本节数字为 50 轨迹时代的旧冻结口径，
 > 与最新 200 轨迹矩阵及三项协议缺陷冲突，**"显著负迁移"结论撤回**，待统一协议重跑后再定论：
@@ -165,9 +194,10 @@ A3 的 validation-only 选层结果并列为两条现役结论。当前唯一现
 `depth*=R`、`primary=null`、`verdict=no_source_candidate`，未观察到确认性正迁移；这并不把
 历史 A1 证据重述为正迁移。
 
-历史 A1 冻结数字（P0 修复后 5 seeds 全量重跑，归一化 RMSE，越低越好；
-出处：项目主仓 `docs/开发推进计划/progress.md` "PA6 GPT 三轮审阅 P0-1/2/3 修复"
-与"第九次终修"两节；不得用其取代上文 A3 的当前口径）：
+历史 A1 冻结数字——**历史 v1/P0 后口径（已被 F1/F2 v2 取代，标签尺度与数据不同，
+不可与 §6.0 的 0.1551/0.2293 等现役数字横向比较）**（P0 修复后 5 seeds 全量重跑，
+归一化 RMSE，越低越好；出处：项目主仓 `docs/开发推进计划/progress.md` "PA6 GPT
+三轮审阅 P0-1/2/3 修复"与"第九次终修"两节；不得用其取代上文 A3 与 §6.0 的当前口径）：
 
 | 组 | RMSE（5 seed 均值） | 说明 |
 |----|--------------------|------|
@@ -194,13 +224,14 @@ A3 的 validation-only 选层结果并列为两条现役结论。当前唯一现
 
 保留该历史 A1 记录的工程意义：它说明为什么需进行 A3 的清零重审与 validation-only
 选层；最终仍以 A3 的无确认性正信号界定 MOSFET 源初始化的适用边界。组件差异化主卖点 =
-三级数字孪生 + 优雅降级 +
-遥测驱动 target-only 预测（0.2521 vs constant 0.3917，1.55×）。
+三级数字孪生 + 优雅降级 + 遥测驱动 target-only 预测（现役数字见 §6.0：
+GRU `0.1551±0.0131` vs constant `0.2293`；本节历史 v1 数字不作现役引用）。
 
 ## 7. 里程碑与已知边界
 
 - 相控阵组件差异化：三级仿真 + 优雅降级（已冻结，PHYSICS_CHAIN.yaml + 测试守护）；
-- target-only 预测路线成立（删服务判据量消融 0.2547 ≈ 0.2521，非读判据量离阈值距离）；
+- target-only 预测路线成立（v1 时代"删服务判据量"消融 0.2547 ≈ 0.2521，属历史口径证据；
+  现役 v2 数字见 §6.0）；
 - GaN RFALT 空间矩阵（10 seed/300 轨迹）同样未达预注册正迁移门槛（平均
   Δ = −0.0011，CI 全负；逐 seed 仅 seed44 负向，不宣称"稳定有害"，只宣称
   "未观察到正迁移"）；

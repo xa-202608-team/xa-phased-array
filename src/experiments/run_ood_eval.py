@@ -36,7 +36,9 @@ import torch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from src.utils import load_config, set_seed                                  # noqa: E402
-from src.transfer.channel_dataset import load_target_channel, ChannelSeqDataset  # noqa: E402
+from src.transfer.channel_dataset import (  # noqa: E402
+    load_target_channel, ChannelSeqDataset,
+    read_channel_label_meta, CHANNEL_LABEL_SCHEMA_V2)
 from src.transfer.train_transfer import split_trajectories, SourceWindowDataset  # noqa: E402
 from src.experiments.run_groups import _build_model, _train_with_early_stop, eval_test  # noqa: E402
 from src.baselines.physical_extrap import phm_score, mae as mae_fn           # noqa: E402
@@ -120,6 +122,9 @@ def evaluate_ood(cfg: dict, ckpt_path: Path, seed: int, verbose: bool = True) ->
                 "note": "无 OOD 轨迹, 当前仿真参数域未覆盖预注册角点"}
 
     # 加载数据
+    # F1-A: v2 loader 已返回 rul_ch_norm (窗口数/H); v1 返回窗口数需再除 rul_max_norm
+    with h5py.File(target_h5, "r") as _f:
+        ch_meta = read_channel_label_meta(_f)
     xT, hiT, rulT, ckT, tidT, evT, lbT, n_traj, sidT = load_target_channel(target_h5)
     # 划分只在 IID 内做 (OOD 排除)
     iid_mask = np.isin(tidT, list(iid_ids))
@@ -137,9 +142,13 @@ def evaluate_ood(cfg: dict, ckpt_path: Path, seed: int, verbose: bool = True) ->
     fm = xT[tr_mask].mean(axis=0)
     fs = xT[tr_mask].std(axis=0) + 1e-6
     xT_norm = (xT - fm) / fs
-    rul_max = float(tc["rul_max_norm"])
-    rulT_norm = rulT / rul_max
-    lbT_norm = lbT / rul_max
+    # F1-A: v2 已由 loader 归一到 H, factor=1.0; v1 用 transfer.rul_max_norm
+    if ch_meta["channel_label_schema"] == CHANNEL_LABEL_SCHEMA_V2:
+        rul_factor = 1.0
+    else:
+        rul_factor = float(tc["rul_max_norm"])
+    rulT_norm = rulT / rul_factor
+    lbT_norm = lbT / rul_factor
 
     # 构造数据集
     tstride = int(tc.get("target_stride", 50))

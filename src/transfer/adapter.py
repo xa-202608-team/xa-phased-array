@@ -50,15 +50,19 @@ class TransferModel(nn.Module):
     def __init__(self, encoder_type: str = "tcn", n_features: int = 12, n_target: int = 8,
                  input_len: int = 64, channels: int = 64, kernel_size: int = 5,
                  num_blocks: int = 4, dropout: float = 0.1, latent_dim: int = 64,
-                 adapter_hidden: int = 64):
+                 adapter_hidden: int = 64, gru_hidden: int = 64, gru_layers: int = 2,
+                 gru_dropout: float | None = None):
         super().__init__()
         self.adapter = Adapter(n_target, n_features, adapter_hidden)
+        # F1-A: GRU 架构参数显式化 (旧版吃 GRUEncoder 默认 64/2/0.1, 训练/导出/推理间隐式漂移)
+        _gru_dropout = dropout if gru_dropout is None else gru_dropout
         if encoder_type == "tcn":
             self.encoder = TCNEncoder(n_features, channels, kernel_size, num_blocks, dropout, latent_dim)
         elif encoder_type == "lstm":
             self.encoder = LSTMEncoder(n_features, latent_dim=latent_dim)
         elif encoder_type == "gru":
-            self.encoder = GRUEncoder(n_features, latent_dim=latent_dim)
+            self.encoder = GRUEncoder(n_features, hidden=gru_hidden, num_layers=gru_layers,
+                                      dropout=_gru_dropout, latent_dim=latent_dim)
         else:
             raise ValueError(f"未知 encoder: {encoder_type}")
         self.hi_head = nn.Linear(latent_dim, 1)

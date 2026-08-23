@@ -31,6 +31,61 @@ from torch.utils.data import Dataset
 from src.transfer.train_transfer import TargetSeqDataset  # noqa: F401  (re-export)
 
 
+# F1-A: channel label schema 版本与必填 attrs。消费者一律经 read_channel_label_meta
+# 校验后按版本读字段, 缺失即 fail (不 warning 继续), 根除尺度静默漂移。
+CHANNEL_LABEL_SCHEMA_V1 = "channel_label_v1"
+CHANNEL_LABEL_SCHEMA_V2 = "channel_label_v2"
+_CHANNEL_META_V2_REQUIRED = (
+    "rul_scale_windows", "sample_period_s", "rul_capped", "mission_horizon_windows")
+
+
+def read_channel_label_meta(h5: "h5py.File") -> dict:
+    """强校验 channel_features.h5 顶层 attrs, 返回标签尺度元数据。
+
+    v2 (channel_label_v2, mission_horizon):
+        schema/rul_scale_windows(=H)/sample_period_s/rul_capped/mission_horizon_windows
+        缺一即 ValueError; 模型标签读 rul_ch_norm (=rul_ch_windows/H), 物理/推理还原
+        读 rul_ch_windows × sample_period_s。
+    v1 (channel_label_v1, legacy_cap):
+        仅校验 schema; 模型标签读 rul_ch (已按 cap_ratio*T 封顶的窗口数, 旧口径),
+        归一仍由调用方用 transfer.rul_max_norm (service 级 4088) 处理。
+    无 channel_label_schema attr 视为旧产物, 直接报错要求重建。
+    """
+    schema = str(h5.attrs.get("channel_label_schema", ""))
+    if not schema:
+        raise ValueError(
+            "channel_features.h5 缺 channel_label_schema attr (疑似 2026-08-22 F1-A 之前的"
+            "旧产物); 请重建: python -m src.sim.build_channel_hi")
+    if schema not in (CHANNEL_LABEL_SCHEMA_V1, CHANNEL_LABEL_SCHEMA_V2):
+        raise ValueError(f"未知 channel_label_schema={schema!r}; 期望 v1/v2")
+    meta = {"channel_label_schema": schema}
+    if schema == CHANNEL_LABEL_SCHEMA_V2:
+        for k in _CHANNEL_META_V2_REQUIRED:
+            if k not in h5.attrs:
+                raise ValueError(f"v2 channel_features.h5 缺必填 attr {k!r}")
+        H = float(h5.attrs["rul_scale_windows"])
+        sp = float(h5.attrs["sample_period_s"])
+        H_alt = float(h5.attrs["mission_horizon_windows"])
+        if H <= 0 or sp <= 0:
+            raise ValueError(f"rul_scale_windows/sample_period_s 必须为正, 得 H={H} sp={sp}")
+        if abs(H - H_alt) > 1e-6:
+            raise ValueError(
+                f"rul_scale_windows({H}) != mission_horizon_windows({H_alt}); 数据损坏")
+        if str(h5.attrs["rul_capped"]).lower() != "false":
+            raise ValueError(
+                f"v2 要求 rul_capped='false', 得 {h5.attrs.get('rul_capped')!r}")
+        meta.update({
+            "rul_scale_windows": H, "sample_period_s": sp,
+            "rul_capped": False, "mission_horizon_windows": H_alt,
+            "t_dev_unit": str(h5.attrs.get("t_dev_unit", "")),
+        })
+        if meta["t_dev_unit"] != "degC":
+            raise ValueError(
+                f"v2 canonical 要求 t_dev_unit='degC', 得 {meta['t_dev_unit']!r}; "
+                "重建 build_channel_hi (清零重审温度修复后产物)")
+    return meta
+
+
 class ChannelSeqDataset(TargetSeqDataset):
     """通道级窗口数据集 (继承 TargetSeqDataset, 仅改 docstring; 父类逻辑直接可用)。
 
@@ -48,6 +103,12 @@ def load_target_channel(h5_path: Path | str, drop_features: list | None = None,
       event (N,), rul_lb (N,), n_traj, sub_ids (N,)
     其中 N = Σ_traj Σ_sub T_{traj,sub} (失效通道 T=eol+1, 删失 T=full)。
 
+    返回的 rul 已为**模型标签口径**:
+      - v2 (channel_label_v2): rul_ch_norm (窗口数 / H, 已归一, run_groups factor=1.0);
+      - v1 (channel_label_v1): rul_ch (窗口数, 由 run_groups 按 rul_max_norm 归一)。
+    调用方一律不要再除以 H 或 4088 — 尺度由本函数按 schema 锁定 (F1-A 根除双归一)。
+    需 H/绝对窗口的消费者 (基线/绘图/推理) 另用 read_channel_label_meta()。
+
     **k-shot 协议不在本函数做** (需要先 split_trajectories 确定 train 子集);
     调用方 (run_groups) 在 split 后用 sample_kshot_trajectories 采样 + apply_kshot_mask。
     """
@@ -56,10 +117,10 @@ def load_target_channel(h5_path: Path | str, drop_features: list | None = None,
     ck_list, tid_list, sid_list = [], [], []
     traj_ids_set: set[int] = set()
     with h5py.File(h5_path, "r") as f:
-        # 清零重审: 旧版 channel_features.h5 的 T_dev_C 列为 Kelvin (未 −273.15), 缺标记即提示重建
-        if str(f.attrs.get("t_dev_unit", "")) != "degC":
-            print(f"[warning] {h5_path} 缺 t_dev_unit='degC' 标记 (疑似旧版 Kelvin canonical); "
-                  "请重建: python -m src.sim.build_channel_hi")
+        # F1-A: 强校验 schema + v2 必填 attrs, 缺失/版本不符直接 fail (不 warning)
+        meta = read_channel_label_meta(f)
+        schema = meta["channel_label_schema"]
+        rul_field = "rul_ch_norm" if schema == CHANNEL_LABEL_SCHEMA_V2 else "rul_ch"
         traj_keys = sorted(f.keys())
         for tk in traj_keys:
             traj_grp = f[tk]
@@ -78,7 +139,7 @@ def load_target_channel(h5_path: Path | str, drop_features: list | None = None,
                     keep = [i for i, c in enumerate(CANONICAL_COLS) if c not in drop_features]
                     x_ch = x_ch[:, keep]
                 hi = sub["hi_ch"][:].astype(np.float32)
-                rul = sub["rul_ch"][:].astype(np.float32)
+                rul = sub[rul_field][:].astype(np.float32)
                 ev_arr = np.full(T, event, dtype=bool)
                 lb_arr = rul.copy()  # rul_lower_bound = rul (失效精确 / 删失下界)
                 x_list.append(x_ch)

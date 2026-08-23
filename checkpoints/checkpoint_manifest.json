@@ -2,8 +2,8 @@
   "schema_version": "1.1.0",
   "component": "phased_array",
   "status": "ROLES_VERIFIED",
-  "verified_at": "2026-08-15",
-  "note": "各 checkpoint 的角色、消费方与状态已核实（docs/MODELING.md §4/§6）。权重文件按治理不入库；sha256 在本地训练产出后如实登记，不预填编造；本地绝对路径不写入本清单。",
+  "verified_at": "2026-08-22",
+  "note": "各 checkpoint 的角色、消费方与状态已核实（docs/MODELING.md §4/§6）。权重文件按治理不入库；sha256 在本地训练产出后如实登记（2026-08-22 复核与盘上文件一致），不预填编造；本地绝对路径不写入本清单。",
   "entries": [
     {
       "name": "source_phased_array_tcn_pretrain.pt",
@@ -14,7 +14,7 @@
         "ch_source_pretrain_frozen（S2 冻结协议组）",
         "ch_source_mmd_physics（源 ckpt + S3 全微调 + MMD + L_phys，主迁移组）"
       ],
-      "status_note": "冻结结论 NO_POSITIVE_TRANSFER_SUPPORTED（docs/MODELING.md §6）：该 ckpt 在两种协议下均显著负迁移（init_control/full_control CI 全正），保留作负对照与归因链证据，主模型 target_only_gru 不依赖它",
+      "status_note": "迁移终局结论 NO_CONFIRMED_POSITIVE_TRANSFER（清零重审后口径, docs/MODELING.md §6）：全监督下源 ckpt 与随机初始化不可区分（主归因 CI 跨 0），k=3 少样本下源初始化显著有害（CI 全正）；保留作负对照与归因链证据，主模型不依赖它。F2 v2 口径 5-seed 复现（归因三对照 CI 全跨 0）。注：旧文案\"两种协议下均显著负迁移\"系清零重审（2026-08-17/18）已撤回的前三 P0 协议缺陷期口径",
       "rebuild": "python -m src.train.pretrain --config configs/phased_array.yaml --canonical（或 scripts/reproduce_full.py P2 自动产出）",
       "sha256": "dac4bd38ba4b28b54b72b9c786b99f581e0ca9a49accb355f8ac527e3d5e8946",
       "tracked": false,
@@ -28,7 +28,7 @@
       "source_mode": "derived_from_public_dataset",
       "redistributable": false,
       "source_url": null,
-      "reproduce_status": "pending_legacy_verification",
+      "reproduce_status": "frozen_artifact_sha_verified_local",
       "rc_payload": false
     },
     {
@@ -61,7 +61,7 @@
       "source_mode": "derived_from_public_dataset",
       "redistributable": false,
       "source_url": null,
-      "reproduce_status": "pending_legacy_verification",
+      "reproduce_status": "frozen_artifact_sha_verified_local",
       "rc_payload": false
     }
   ]

@@ -5,15 +5,23 @@
 逐字节一致，`tests/test_component_predict.py` 守护）。
 正式组件版本只能由 `@xa-202608-team/integrators` 签发。
 
+> **当前定位（v0.3.0 候选）**：主模型 = `ch_target_only_gru` + 三级退化数字孪生
+> （F2 v2 正式 5-seed：RMSE `0.1551±0.0131` ÷H，H=11688 统一任务视界）。
+> 公开结论 = `NO_CONFIRMED_POSITIVE_TRANSFER`：全监督下源初始化/MMD 无确认增益
+> （三项归因 CI 均跨 0）；k=3 少样本源初始化有害属**少样本边界证据**，不得外推为
+> 全监督结论。契约机器枚举 `NO_POSITIVE_TRANSFER_SUPPORTED` 与本公开口径的映射
+> 见 `docs/SIMULATION_REPRODUCE.md` §2。
+
 ## 组件内容
 
 - **三级退化数字孪生**（差异化主卖点）：GaN T/R 器件应力退化 → 阵列方向图/旁瓣/
   指向 → 链路余量与服务越限，优雅降级建模；结构冻结文档
   `docs/simulation/PHYSICS_CHAIN.yaml`（`scripts/generate_physics_chain.py` 从
   config 导出，测试守护）。
-- **跨域迁移结论（冻结）**：`NO_POSITIVE_TRANSFER_SUPPORTED` —— NASA MOSFET
-  源 ckpt 显著负迁移 + MMD 无贡献，迁移适用边界与负迁移诊断本身为论证内容
-  （`docs/MODELING.md` §6，含三对照归因链与 5-seed 冻结数字）。
+- **跨域迁移结论（冻结）**：`NO_CONFIRMED_POSITIVE_TRANSFER` —— 全监督下源权重
+  不可区分于随机初始化（init/full/MMD 三项归因 CI 均跨 0），k=3 少样本源初始化
+  显著有害属少样本边界证据；迁移适用边界与负迁移诊断本身为论证内容
+  （`docs/MODELING.md` §6，含 F2 v2 5-seed 冻结数字与三项归因 CI）。
 - **单指标遥测入口**：`python -m component.predict`（method=
   `causal_single_telemetry`），未知在轨数据接入 + 因果趋势基线，与 PyTorch
   主模型（`src/experiments/run_groups.py`）指标口径严格区分（`docs/MODELING.md` §5）。
@@ -24,7 +32,7 @@
 configs/          组件级 YAML（phased_array.yaml / phased_array_gan.yaml）
 src/              仿真、预处理、模型、迁移、实验编排
 component/        契约 v1.1 单指标预测入口（io 标签隔离 / predictor 因果外推）
-schemas/          契约 Schema 快照（component-contract-v1.1.0 Tag 逐字节一致，8 个）
+schemas/          契约 Schema 快照（component-contract-v1.1.0 Tag 逐字节一致 8 个 + 组件自有 rul-prediction.schema.json）
 scripts/          统一入口五件套 + entrypoint.sh + 可视化/分析脚本
 tests/            单元与物理一致性测试（含仓库边界守护、Schema 快照、三级链冻结）
 docs/             MODELING / DATA_DICTIONARY / SIMULATION_REPRODUCE + figures + smoke 结果
@@ -65,13 +73,13 @@ python scripts/predict_telemetry.py --telemetry T.csv --metadata M.yaml \
 
 ```bash
 docker build --build-arg XA_GIT_COMMIT=$(git rev-parse HEAD) \
-    -t xa-phased-array:baseline-v0.1.0 .
+    -t xa-phased-array:v0.3.0-rc.1 .
 #（无 GPU / NVIDIA 源不可达时加 --build-arg TORCH_EXTRA_INDEX=https://download.pytorch.org/whl/cpu）
-docker run --rm xa-phased-array:baseline-v0.1.0 verify
+docker run --rm xa-phased-array:v0.3.0-rc.1 verify
 docker run --rm -v "$PWD/outputs:/outputs" \
     -v "$PWD/artifacts/data:/artifacts/data:ro" \
     -v "$PWD/artifacts/checkpoints:/artifacts/checkpoints:ro" \
-    xa-phased-array:baseline-v0.1.0 reproduce_judge /outputs/judge
+    xa-phased-array:v0.3.0-rc.1 reproduce_judge /outputs/judge
 ```
 
 `/artifacts/data`、`/artifacts/checkpoints` 只读挂载（`mosfet_canonical.h5`、

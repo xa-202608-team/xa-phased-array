@@ -30,8 +30,19 @@ EVAL_IDS = list(range(70, 85))
 L_WIN, STRIDE = 64, 50
 HIDDEN, N_EPOCHS, LR, BATCH = 64, 20, 1e-3, 256
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-RUL_NORM = 4088.0
+# F1-A: RUL 归一尺度不再硬编码 4088; 从 channel_features.h5 schema 读 (v2=H, v1=4088)
 SEEDS = [42, 43, 44]
+
+
+def get_rul_norm_and_field(h5_path):
+    """从 h5 schema 返回 (rul_norm, rul_field): v2→(H, rul_ch_windows), v1→(4088, rul_ch)。"""
+    from src.transfer.channel_dataset import (
+        read_channel_label_meta, CHANNEL_LABEL_SCHEMA_V2)
+    with h5py.File(h5_path, "r") as f:
+        meta = read_channel_label_meta(f)
+    if meta["channel_label_schema"] == CHANNEL_LABEL_SCHEMA_V2:
+        return float(meta["rul_scale_windows"]), "rul_ch_windows"
+    return 4088.0, "rul_ch"
 
 
 class GRUModel(nn.Module):
@@ -74,7 +85,8 @@ def fit_target_scaler():
 
 
 def build_windows(h5_path, traj_ids, scaler_mean, scaler_std, n_sub=16):
-    """构建 z-score 归一化的滑窗。"""
+    """构建 z-score 归一化的滑窗。RUL 尺度从 h5 schema 读 (F1-A, 不硬编码 4088)。"""
+    rul_norm, rul_field = get_rul_norm_and_field(h5_path)
     xs, rs, evs = [], [], []
     with h5py.File(h5_path, "r") as f:
         for ti in traj_ids:
@@ -84,7 +96,7 @@ def build_windows(h5_path, traj_ids, scaler_mean, scaler_std, n_sub=16):
                     continue
                 g = f[key]
                 x_ch = (g["x_ch"][:] - scaler_mean) / scaler_std  # z-score
-                rul = g["rul_ch"][:] / RUL_NORM
+                rul = g[rul_field][:] / rul_norm
                 event = bool(g.attrs.get("event_observed", 0))
                 T = len(x_ch)
                 for s in range(0, max(1, T - L_WIN + 1), STRIDE):
@@ -133,14 +145,15 @@ def train_one(x_tr, r_tr, ev_tr, x_va, r_va, ev_va, seed):
 
 
 def eval_model(model, x, rul, event):
+    # x/rul 均已在归一空间 (rul = 窗口数 / H 或 4088); 直接算归一化 RMSE (旧版乘除 RUL_NORM 恒等抵消)
     if not event.any():
         return float("nan")
     model.eval()
     with torch.no_grad():
         xt = torch.tensor(x[event], device=DEVICE)
-        pred = model(xt).cpu().numpy() * RUL_NORM
-        true = rul[event] * RUL_NORM
-    return float(np.sqrt(np.mean((pred - true) ** 2))) / RUL_NORM  # 归一化 RMSE
+        pred = model(xt).cpu().numpy()
+        true = rul[event]
+    return float(np.sqrt(np.mean((pred - true) ** 2)))
 
 
 def main():

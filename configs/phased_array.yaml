@@ -108,6 +108,10 @@ model:
     kernel_size: 5
     num_blocks: 4
     dropout: 0.1
+  gru:                                  # F1-A: GRU 架构参数显式化 (factory 唯一构造, 防漂移)
+    hidden: 64
+    num_layers: 2
+    dropout: 0.1
   latent_dim: 64
   array_aggregator: attention            # 通道 HI -> 阵列系统性能聚合 (PA4)
 
@@ -161,8 +165,10 @@ transfer:
     val: 0.20
     test: 0.65
   finetune_lr: 1.0e-4
-  # P1-2: RUL 归一物理上限 (跨 seed 固定, 不再每 seed 用 train-only max)
-  # 派生: rul_cap_ratio(0.35) × duration_years(8) × 365 × 4(6h/日) = 0.35 × 11680 = 4088
+  # [F1 收口] 通道级 v2 已改用 channel_level.rul_scale_policy=mission_horizon (H≈11688 窗),
+  # 不再使用本字段 (=4088=0.35×视界, 违反寿命分母硬约束)。本字段保留仅供旧服务级
+  # (service/schema_v1 target_features) 路径独立使用, 通道级 run_groups 若检测到
+  # channel_level.rul_scale_policy=mission_horizon 则忽略本字段 (见 run_groups)。
   rul_max_norm: 4088
   target_feature_path: data/features/phased_array/schema_v1/target/target_features.h5  # 相控阵目标域 (x_global+x_nodes)
   ablation_drop_features: []   # GPT §6 消融: 删服务寿命判据量验证 target-only 真学退化 (非读判据量离阈值距离); 空=主实验不删; 消融设 [M_link_dB, SLL_dB, theta_err_deg] (或 run_groups --drop-features 覆盖)
@@ -197,9 +203,17 @@ channel_level:
     g_m: 0.15
     P_out: 0.20                # 功率漂移阈值 (canonical x_ch 第0维 δ_P, ≈1dB)
   delta_source_R_DS: 0.05      # 源域 Si MOSFET (NASA Celaya 判据)
-  rul_cap_ratio: 0.35
+  # F1 收口 (GPT 评审逐条裁定): channel_label_v2 统一任务视界归一, 不截顶, 不 per-轨迹 EOL 归一
+  rul_scale_policy: mission_horizon   # mission_horizon=除以全局 H(~11688 窗, h5 元数据锁定) | legacy_cap=旧 v1 (弃用, 仅兼容)
   calibration_seed: 1234       # 标定专用 seed, 与实验 seed 严格隔离
   feature_path: data/features/phased_array/schema_ch_v1/target/channel_features.h5
+
+# ---------- 服务级 (旧 PA6 / cross_level_transfer 层级消融) ----------
+# F1-A: 服务级尺度单独拆出 (不再与通道级共用 transfer.rul_max_norm)。服务级标签为
+# 12 维 target_features 的窗口数 RUL, 归一到固定跨 seed 物理上限 4088 窗 (= cap_ratio×视界)。
+service_level:
+  rul_scale_windows: 4088
+  rul_label_schema: service_label_v1
 
 # ---------- 对比实验 (PA6; 方案 §8 八组 + 三类消融) ----------
 experiments:

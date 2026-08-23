@@ -40,7 +40,7 @@ sys.path.insert(0, str(ROOT))
 
 from src.utils import load_config, set_seed                               # noqa: E402
 from src.transfer.train_transfer import TargetSeqDataset, split_trajectories, load_target  # noqa: E402
-from src.transfer.adapter import TransferModel                             # noqa: E402
+from src.models.factory import build_transfer_model                        # noqa: E402
 from src.train.pretrain import _rul_loss                                   # noqa: E402
 from src.baselines.phased_array_baselines import _hi_extrap_predict        # noqa: E402
 
@@ -93,13 +93,9 @@ def load_and_prepare(cfg, seed):
 
 # ===================================================================== 模型训练
 def build_model(cfg, n_features, n_target, device, encoder="tcn"):
-    mc = cfg["model"]
-    tc = cfg["transfer"]
-    return TransferModel(
-        encoder_type=encoder, n_features=n_features, n_target=n_target,
-        channels=mc["tcn"]["channels"], kernel_size=mc["tcn"]["kernel_size"],
-        num_blocks=mc["tcn"]["num_blocks"], dropout=mc["tcn"]["dropout"],
-        latent_dim=mc["latent_dim"], adapter_hidden=tc["adapter_hidden"]).to(device)
+    # F1-A: 复用唯一构造函数 (与训练/评估/导出/推理同架构, 防漂移)
+    return build_transfer_model(cfg, n_features=n_features, n_target=n_target,
+                                encoder_type=encoder, device=device)
 
 
 def train_epoch(model, loader, opt, device, huber, mse, lam):

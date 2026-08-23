@@ -207,7 +207,12 @@ def build_chain(cfg: dict, config_path: Path) -> dict:
             "channel_level": {
                 "input": "sim_v2 (subdose on, dynamics_id=phased_array_subdose_v2)",
                 "builder": "src/sim/build_channel_hi.py",
-                "label": "z=max(dR/dR_th, dI/dI_th, dg/d_th); hi=clip(z,0,1); rul 封顶 0.35T; EOL 后截断",
+                "label": (
+                    "z=max(dR/dR_th, dI/dI_th, dg/d_g_th); hi=clip(z,0,1); "
+                    "v2 双字段: rul_ch_windows=EOL_ch−t (删失=观测终点下界, 不做 0.35T 截顶), "
+                    "rul_ch_norm=rul_ch_windows/H (H=mission_horizon 统一任务视界=11688 窗, "
+                    "模型数值单位, 非物理寿命比例); 失效通道截断到 EOL (P0-1)"
+                ),
                 "output": "channel_level.feature_path (canonical 4 维 device_canonical_v1)",
             },
             "service_level": {

@@ -1,0 +1,479 @@
+=== BASE cc8f214, working tree ===
+=== git diff --stat ===
+ scripts/plot_trajectory.py      |  12 +--
+ src/transfer/channel_dataset.py |   2 +-
+ tests/test_channel_baselines.py |  29 +++++-
+ tests/test_channel_hi.py        | 199 +++++++++++++++++++++++++++++++++++++---
+ tests/test_models_factory.py    |  32 ++++++-
+ tests/test_rul_scale_policy.py  |   8 +-
+ 6 files changed, 251 insertions(+), 31 deletions(-)
+
+=== git diff -U5 ===
+diff --git a/scripts/plot_trajectory.py b/scripts/plot_trajectory.py
+index 18e8866..46e2f80 100644
+--- a/scripts/plot_trajectory.py
++++ b/scripts/plot_trajectory.py
+@@ -38,11 +38,11 @@ from torch.utils.data import DataLoader
+ ROOT = Path(__file__).resolve().parents[1]
+ sys.path.insert(0, str(ROOT))
+ 
+ from src.utils import load_config, set_seed                               # noqa: E402
+ from src.transfer.train_transfer import TargetSeqDataset, split_trajectories, load_target  # noqa: E402
+-from src.transfer.adapter import TransferModel                             # noqa: E402
++from src.models.factory import build_transfer_model                        # noqa: E402
+ from src.train.pretrain import _rul_loss                                   # noqa: E402
+ from src.baselines.phased_array_baselines import _hi_extrap_predict        # noqa: E402
+ 
+ CKPT_DIR = ROOT / "checkpoints"
+ 
+@@ -91,17 +91,13 @@ def load_and_prepare(cfg, seed):
+                 rul_max=rul_max, n_features=xT.shape[1])
+ 
+ 
+ # ===================================================================== 模型训练
+ def build_model(cfg, n_features, n_target, device, encoder="tcn"):
+-    mc = cfg["model"]
+-    tc = cfg["transfer"]
+-    return TransferModel(
+-        encoder_type=encoder, n_features=n_features, n_target=n_target,
+-        channels=mc["tcn"]["channels"], kernel_size=mc["tcn"]["kernel_size"],
+-        num_blocks=mc["tcn"]["num_blocks"], dropout=mc["tcn"]["dropout"],
+-        latent_dim=mc["latent_dim"], adapter_hidden=tc["adapter_hidden"]).to(device)
++    # F1-A: 复用唯一构造函数 (与训练/评估/导出/推理同架构, 防漂移)
++    return build_transfer_model(cfg, n_features=n_features, n_target=n_target,
++                                encoder_type=encoder, device=device)
+ 
+ 
+ def train_epoch(model, loader, opt, device, huber, mse, lam):
+     model.train()
+     for batch in loader:
+diff --git a/src/transfer/channel_dataset.py b/src/transfer/channel_dataset.py
+index 1d08778..068038e 100644
+--- a/src/transfer/channel_dataset.py
++++ b/src/transfer/channel_dataset.py
+@@ -58,11 +58,11 @@ def read_channel_label_meta(h5: "h5py.File") -> dict:
+             "旧产物); 请重建: python -m src.sim.build_channel_hi")
+     if schema not in (CHANNEL_LABEL_SCHEMA_V1, CHANNEL_LABEL_SCHEMA_V2):
+         raise ValueError(f"未知 channel_label_schema={schema!r}; 期望 v1/v2")
+     meta = {"channel_label_schema": schema}
+     if schema == CHANNEL_LABEL_SCHEMA_V2:
+-        for k in _CHANNEL_META_REQUIRED:
++        for k in _CHANNEL_META_V2_REQUIRED:
+             if k not in h5.attrs:
+                 raise ValueError(f"v2 channel_features.h5 缺必填 attr {k!r}")
+         H = float(h5.attrs["rul_scale_windows"])
+         sp = float(h5.attrs["sample_period_s"])
+         H_alt = float(h5.attrs["mission_horizon_windows"])
+diff --git a/tests/test_channel_baselines.py b/tests/test_channel_baselines.py
+index 88e2140..8dea700 100644
+--- a/tests/test_channel_baselines.py
++++ b/tests/test_channel_baselines.py
+@@ -2,11 +2,12 @@
+ 
+ 验证 src/baselines/channel_baselines.py:
+   - 5 个基线输出形状/语义正确 (constant/z_extrap/arrhenius/similarity/particle_filter)
+   - 评估口径与 run_groups.eval_test 一致 (仅失效通道算 RMSE/PHM/MAE; 删失报下界违反率)
+   - 划分按 traj_id (同 traj 16 子阵同 split)
+-  - rul_max_norm 固定归一 (跨 seed 可比)
++  - rul_max_norm 固定归一: v2 数据从 h5 meta 读 H (rul_scale_windows=11688), v1 沿用
++    transfer.rul_max_norm (4088); 跨 seed 可比 (F1-A 双口径, 不再写死 4088)
+   - DTW 距离 / 粒子滤波 边界行为
+ """
+ import sys
+ from pathlib import Path
+ 
+@@ -194,12 +195,12 @@ def _require_data():
+ 
+ 
+ def _smoke_cfg(cfg):
+     """缩小 test split 加速端到端测试 (test 集约 20-40 通道, similarity 不至于超时)。
+ 
+-    评估口径与正式 run 完全一致 (同 traj_id 划分 + rul_max_norm 归一 + 仅失效 RMSE),
+-    只是 test 集小; 数字本身不代表正式结果。
++    评估口径与正式 run 完全一致 (同 traj_id 划分 + rul_max_norm 归一 (v2=H 读 h5 meta,
++    v1=4088) + 仅失效 RMSE), 只是 test 集小; 数字本身不代表正式结果。
+     """
+     import copy
+     cfg2 = copy.deepcopy(cfg)
+     cfg2["transfer"]["split"] = {"train": 0.80, "val": 0.10, "test": 0.10}
+     return cfg2
+@@ -214,23 +215,41 @@ def test_load_channels_structure():
+     assert c0["x_ch"].ndim == 2 and c0["x_ch"].shape[1] == 4
+     assert c0["hi_ch"].ndim == 1 and c0["z_ch"].ndim == 1 and c0["rul_ch"].ndim == 1
+     assert len(c0["x_ch"]) == len(c0["hi_ch"]) == len(c0["z_ch"]) == len(c0["rul_ch"])
+     assert isinstance(c0["event"], bool)
+     assert isinstance(c0["traj_id"], int) and isinstance(c0["sub_id"], int)
++    # F1-A: dict key 仍叫 rul_ch (兼容消费方), 但 v2 下内容为绝对窗口数 (读 rul_ch_windows,
++    # 未归一), 基线自行 /H — 断言值域是窗口数 (>1) 而非归一值, 防双归一回潮
++    from src.transfer.channel_dataset import (
++        read_channel_label_meta, CHANNEL_LABEL_SCHEMA_V2)
++    with h5py.File(feature_path, "r") as f:
++        _schema = read_channel_label_meta(f)["channel_label_schema"]
++    if _schema == CHANNEL_LABEL_SCHEMA_V2:
++        assert bool(np.any(c0["rul_ch"] > 1.0)), \
++            "v2 下 rul_ch key 应为绝对窗口数 (>1), 而非归一化值"
+     # 至少有失效和删失各一
+     assert any(c["event"] for c in chs) and not all(c["event"] for c in chs)
+ 
+ 
+ def test_evaluate_channel_baselines_full():
+     """端到端: 5 个基线都返回有效指标 (rmse/mae/phm/censor_violation_rate)。
+     用 _smoke_cfg 缩小 test 集加速 (口径不变, 仅 test 规模小)。"""
+-    cfg, _ = _require_data()
++    cfg, feature_path = _require_data()
+     cfg = _smoke_cfg(cfg)
+     res = evaluate_channel_baselines(cfg, seed=42, verbose=False)
+     assert res is not None
+     proto = res["_protocol"]
+-    assert proto["rul_max_norm"] == float(cfg["transfer"]["rul_max_norm"])
++    # F1-A: v2 的恢复上限从 h5 meta 读 (H=rul_scale_windows=11688), 不再是
++    # transfer.rul_max_norm (4088)。用 read_channel_label_meta 读 schema 再分流断言。
++    from src.transfer.channel_dataset import (
++        read_channel_label_meta, CHANNEL_LABEL_SCHEMA_V2)
++    with h5py.File(feature_path, "r") as f:
++        meta = read_channel_label_meta(f)
++    if meta["channel_label_schema"] == CHANNEL_LABEL_SCHEMA_V2:
++        assert proto["rul_max_norm"] == meta["rul_scale_windows"]
++    else:
++        assert proto["rul_max_norm"] == float(cfg["transfer"]["rul_max_norm"])
+     # library 限制生效
+     assert proto["n_library"] <= 60
+     for name in ["constant", "z_extrap", "arrhenius", "similarity_matching",
+                  "particle_filter"]:
+         m = res[name]
+diff --git a/tests/test_channel_hi.py b/tests/test_channel_hi.py
+index aa8faed..bfb2816 100644
+--- a/tests/test_channel_hi.py
++++ b/tests/test_channel_hi.py
+@@ -173,13 +173,15 @@ def test_mission_horizon_derived_from_sim_period():
+     assert H == 11688, f"H 应为 11688 (8yr × 365.25d × 4窗/日), 实={H}"
+     assert H != 4088, "不得回归为旧 rul_max_norm=4088"
+ 
+ 
+ def test_channel_label_v2_failed_rul_absolute_no_cap():
+-    """失效通道 v2: rul = (EOL − t) / H，不按 cap_ratio*T 截顶，末端仍=0。
++    """失效通道 v2: build_channel_labels_v2 返回绝对窗口数 (EOL − t)，不按 cap_ratio*T 截顶。
+ 
+-    F1 拍板: 不截顶; 绝对值语义除以全局任务视界 H, 还原为绝对窗口数可逆。
++    F1-A 修正门: 函数层返回绝对窗口数 (= rul_ch_windows 原值); 除以任务视界 H 得模型标签
++    rul_ch_norm 的动作在写盘方 (build_channel_hi.main) / loader (load_target_channel)。
++    本测试验证函数语义 = 绝对窗口数可逆还原 (= eol−t 逐点), 且不截顶。
+     """
+     from src.sim.build_channel_hi import build_channel_labels_v2, compute_mission_horizon_windows
+ 
+     cfg = load_config(PA_CONFIG)
+     sim = cfg["sim"]
+@@ -196,22 +198,26 @@ def test_channel_label_v2_failed_rul_absolute_no_cap():
+         f_s, params, deltas, H=H, cap_ratio=None)
+ 
+     assert event is True
+     assert z[eol] >= 1.0 - 1e-9, "EOL 处损伤应越限"
+     assert z[eol + 1] >= z[eol], "z 单调不可逆"
++    assert keep == eol + 1, "失效通道截断到 EOL+1 (P0-1 铁律)"
+     assert abs(rul[eol]) < 1e-6, "失效末端 rul 应=0"
+-    # 绝对值可还原 (不截顶的实质断言): rul*H == eol-t 逐点
+-    assert np.allclose(rul[:eol] * H, (eol - np.arange(eol)).astype(float), atol=1e-3)
++    # F1-A: 函数返回绝对窗口数 -> rul[:eol] == eol−t 逐点; 归一 (rul_ch_norm=/H) 在写盘方做
++    assert np.allclose(rul[:eol], (eol - np.arange(eol)).astype(float), atol=1e-3), \
++        "v2 函数应返回绝对窗口数 (rul_ch_windows 口径), 不是归一值"
+     assert np.all(np.diff(rul[:eol]) < 0), "失效通道 rul 应严格单调递减 (无截顶平台)"
+-    # 若 eol 足够晚, rul[0] 应等于 eol/H (不是被 0.35 压平)
+-    assert abs(rul[0] - eol / H) < 1e-6, f"rul[0] 应=eol/H 无截顶, 实={rul[0]} vs {eol/H}"
++    # 不截顶: rul[0] == eol (绝对窗口数), 不是被 0.35 压平
++    assert abs(rul[0] - eol) < 1e-6, f"rul[0] 应=eol (绝对窗口数, 不截顶), 实={rul[0]} vs {eol}"
+ 
+ 
+ def test_channel_label_v2_censored_lb_scale_by_h():
+-    """删失通道 v2: rul_lb = (T−1−t) / H（观测终点下界），分母是 H 不是 T−1。
++    """删失通道 v2: build_channel_labels_v2 返回绝对下界窗口数 (T−1−t); /H 在写盘方归一。
+ 
+-    F1 拍板: 删失保留绝对下界语义; 不允许把观测终点 T−1 当归一化分母。
++    F1-A 修正门: 函数不再自行除以 H — 该动作在 build_channel_hi.main 写 rul_ch_norm 时做,
++    loader (load_target_channel) 直接返回已归一标签 (见 test_load_target_channel_v2_fixture)。
++    本测试验证函数层绝对下界语义, 且归一化分母须为 H (不是观测终点 T−1)。
+     """
+     from src.sim.build_channel_hi import build_channel_labels_v2, compute_mission_horizon_windows
+ 
+     cfg = load_config(PA_CONFIG)
+     sim = cfg["sim"]
+@@ -226,14 +232,15 @@ def test_channel_label_v2_censored_lb_scale_by_h():
+     z, hi, rul, event, eol, keep = build_channel_labels_v2(
+         f_s, params, deltas, H=H, cap_ratio=None)
+ 
+     assert event is False
+     assert keep == T
+-    assert abs(rul[0] - (T - 1) / H) < 1e-6, f"删失 rul[0] 应为 (T-1)/H, 实={rul[0]}"
++    # 函数返回绝对下界窗口数: rul[0] == T−1
++    assert abs(rul[0] - (T - 1)) < 1e-6, f"删失 rul[0] 应为绝对下界窗口数 (T−1), 实={rul[0]}"
++    # 归一化分母必须是 H: rull_norm[0]=(T−1)/H 应 < 0.5 (若以 T−1 为分母会=1)
++    assert (T - 1.0) / H < 0.5, f"H 归一后删失下界应 < 0.5, 得 {(T - 1.0) / H}"
+     assert abs(rul[-1]) < 1e-6, "删失末端 rul 应≈0 (观测终点下界=0)"
+-    # 不得以 T−1 为分母（那样 rul[0] 会=1）
+-    assert rul[0] < 0.5, f"T−1 作分母会令 rul[0]=1; 正确除以 H 应 <1, 实={rul[0]}"
+ 
+ 
+ def test_h5_attrs_record_rul_scale_channel_label_v2():
+     """h5 顶层 attrs 记录 rul_label_schema=channel_label_v2、rul_scale_windows、rul_capped=false。
+ 
+@@ -252,5 +259,175 @@ def test_h5_attrs_record_rul_scale_channel_label_v2():
+         assert str(f.attrs["channel_label_schema"]) == "channel_label_v2"
+         assert str(f.attrs["rul_capped"]) == "false"
+         assert float(f.attrs["rul_scale_windows"]) == float(H_from_cfg)
+         assert float(f.attrs["sample_period_s"]) == float(cfg["sim"]["sample_period_s"])
+         assert float(f.attrs["mission_horizon_windows"]) == float(H_from_cfg)
++
++
++# ================================================================ F1-A 任务 8: 最小 v2 HDF5 fixture (clean checkout 无大数据)
++# 用 tmp_path 构造最小合法 v2 channel_features.h5, 不依赖本地 7.8GB 大数据。
++# 写盘结构对齐 src/sim/build_channel_hi.py::main (顶层 attrs + traj_XXX/sub_XX 双字段)。
++# 这些测试是"clean checkout 无见证"问题的核心解决 — 新拉取仓库也能回归 v2 读数路径。
++
++H_FIXTURE = 11688.0
++
++
++def _write_min_v2_h5(path, T: int = 128, schema="channel_label_v2",
++                     rul_capped: str = "false", t_dev_unit: str = "degC",
++                     rul_scale_windows=H_FIXTURE):
++    """写一个最小合法 v2 channel_features.h5 (traj_000/sub_00 失效 + sub_01 删失)。
++
++    参数可按负例覆盖 (schema=None 去掉 schema attr; rul_scale_windows=None 去掉该 attr;
++    rul_capped/t_dev_unit 设非法值), 使 read_channel_label_meta 触发 ValueError。
++    子组数据: z=linspace(0,1.2,T) 单调越限 → 失效通道 (eol=argmax(z>=1));
++    rul_ch_windows=max(eol-t,0), rul_ch_norm=rul_ch_windows/H (值域 [0,1))。
++    """
++    T = int(T)
++    t = np.arange(T, dtype=np.float32)
++    z_fail = np.linspace(0.0, 1.2, T).astype(np.float32)   # 越限 → 失效
++    z_cens = np.linspace(0.0, 0.9, T).astype(np.float32)   # 未越限 → 删失
++
++    def _rul_pair(z):
++        eol = int(np.argmax(z >= 1.0)) if (z >= 1.0).any() else T - 1
++        rul_w = np.maximum(eol - t, 0).astype(np.float32)
++        # 负例 (rul_scale_windows=None 缺 attr) 时文件内容不被强校验读取, rul_norm 随便填
++        rul_n = (rul_w / float(rul_scale_windows)).astype(np.float32) \
++            if rul_scale_windows is not None else rul_w
++        return eol, rul_w, rul_n
++
++    with h5py.File(path, "w") as f:
++        f.attrs["dynamics_id"] = "fixture_v2"
++        f.attrs["canonical_schema"] = "device_canonical_v1"
++        f.attrs["t_dev_unit"] = t_dev_unit
++        f.attrs["t_dev_conversion"] = "fixture"
++        if schema is not None:
++            f.attrs["channel_label_schema"] = schema
++        f.attrs["rul_capped"] = rul_capped
++        if rul_scale_windows is not None:
++            f.attrs["rul_scale_windows"] = float(rul_scale_windows)
++        f.attrs["sample_period_s"] = 21600.0
++        f.attrs["mission_horizon_windows"] = float(H_FIXTURE)
++        f.attrs["delta_thresholds"] = "R_DS=0.35,I_DSS=0.2,g_m=0.15,P_out=0.2"
++        # traj_000·sub_00 失效通道
++        traj = f.create_group("traj_000")
++        sub = traj.create_group("sub_00")
++        sub.create_dataset("x_ch", data=np.zeros((T, 4), dtype=np.float32))
++        sub.create_dataset("hi_ch", data=z_fail)
++        sub.create_dataset("z_ch", data=z_fail)
++        eol0, rul_w0, rul_n0 = _rul_pair(z_fail)
++        sub.create_dataset("rul_ch_windows", data=rul_w0)
++        sub.create_dataset("rul_ch_norm", data=rul_n0)
++        sub.attrs["event_observed"] = 1
++        sub.attrs["eol_idx"] = eol0
++        sub.attrs["traj_id"] = 0
++        sub.attrs["sub_id"] = 0
++        sub.attrs["feature_names"] = "p_drift_norm,T_dev_C,duty,drive_norm"
++        sub.attrs["canonical_schema"] = "device_canonical_v1"
++        # traj_000·sub_01 删失通道 (覆盖 event=0 读数路径)
++        sub2 = traj.create_group("sub_01")
++        sub2.create_dataset("x_ch", data=np.zeros((T, 4), dtype=np.float32))
++        sub2.create_dataset("hi_ch", data=z_cens)
++        sub2.create_dataset("z_ch", data=z_cens)
++        eol1, rul_w1, rul_n1 = _rul_pair(z_cens)
++        sub2.create_dataset("rul_ch_windows", data=rul_w1)
++        sub2.create_dataset("rul_ch_norm", data=rul_n1)
++        sub2.attrs["event_observed"] = 0
++        sub2.attrs["eol_idx"] = eol1
++        sub2.attrs["traj_id"] = 0
++        sub2.attrs["sub_id"] = 1
++        sub2.attrs["feature_names"] = "p_drift_norm,T_dev_C,duty,drive_norm"
++        sub2.attrs["canonical_schema"] = "device_canonical_v1"
++    return path
++
++
++def test_read_channel_label_meta_v2_ok(tmp_path):
++    """合法 v2 h5 → read_channel_label_meta 返回正确字段 (schema/H/sample_period/不封顶/温度单位)。"""
++    from src.transfer.channel_dataset import read_channel_label_meta
++    p = _write_min_v2_h5(tmp_path / "ok.h5")
++    with h5py.File(p, "r") as f:
++        meta = read_channel_label_meta(f)
++    assert meta["channel_label_schema"] == "channel_label_v2"
++    assert meta["rul_scale_windows"] == H_FIXTURE
++    assert meta["sample_period_s"] == 21600.0
++    assert meta["rul_capped"] is False                       # 解析后为 bool
++    assert meta["t_dev_unit"] == "degC"
++    assert meta["mission_horizon_windows"] == H_FIXTURE
++
++
++def test_v2_fixture_dual_fields_no_legacy_rul_ch(tmp_path):
++    """v2 h5 应同时含 rul_ch_windows 与 rul_ch_norm (norm*H==windows), 不含旧 rul_ch。
++
++    断言读 rul_ch 触发 KeyError — 防 v2 原地改语义回潮 (静默写回旧字段)。
++    """
++    p = _write_min_v2_h5(tmp_path / "dual.h5")
++    with h5py.File(p, "r") as f:
++        sub = f["traj_000"]["sub_00"]
++        assert "rul_ch_windows" in sub and "rul_ch_norm" in sub
++        w = sub["rul_ch_windows"][:].astype(np.float64)
++        n = sub["rul_ch_norm"][:].astype(np.float64)
++        assert n.min() >= 0.0 and n.max() < 1.0, "v2 模型标签应归一在 [0,1)"
++        assert np.allclose(n * H_FIXTURE, w, atol=1e-2), "rul_ch_norm*H 应还原绝对窗口数"
++        with pytest.raises(KeyError):
++            _ = sub["rul_ch"]                                # v2 不再写旧 rul_ch
++
++
++def test_load_target_channel_v2_fixture(tmp_path):
++    """load_target_channel 在该 fixture 上跑通: 返回 rul 即 rul_ch_norm (已归一), shape 一致。"""
++    from src.transfer.channel_dataset import load_target_channel
++    p = _write_min_v2_h5(tmp_path / "ltc.h5")
++    with h5py.File(p, "r") as f:
++        stored = f["traj_000"]["sub_00"]["rul_ch_norm"][:].astype(np.float32)
++    x_ch, hi, rul, ck, tid, ev, lb, n_traj, sid = load_target_channel(p)
++    assert n_traj == 1
++    assert len(rul) == len(hi) == len(x_ch) == len(ev) == len(ck) == len(tid)
++    assert rul.dtype == np.float32
++    assert np.allclose(rul[:len(stored)], stored, atol=1e-6), \
++        "load_target_channel 应原样返回 rul_ch_norm (调用方不再除以 H)"
++    assert rul.max() < 1.0, "v2 返回模型标签应已归一 [0,1)"
++    assert bool(ev[0]) is True and bool(ev[len(stored)]) is False  # sub_00 失效 / sub_01 删失
++
++
++# ---- read_channel_label_meta 强校验负例 (每例一个独立 tmp_path 小 h5) ----
++
++def test_meta_missing_schema_attr_valueerror(tmp_path):
++    """缺 channel_label_schema attr → ValueError (疑似 F1-A 前旧产物, 要求重建)。"""
++    from src.transfer.channel_dataset import read_channel_label_meta
++    p = _write_min_v2_h5(tmp_path / "noschema.h5", schema=None)
++    with h5py.File(p, "r") as f:
++        with pytest.raises(ValueError):
++            read_channel_label_meta(f)
++
++
++def test_meta_unknown_schema_valueerror(tmp_path):
++    """channel_label_schema 为未知值 → ValueError。"""
++    from src.transfer.channel_dataset import read_channel_label_meta
++    p = _write_min_v2_h5(tmp_path / "unk.h5", schema="channel_label_v9")
++    with h5py.File(p, "r") as f:
++        with pytest.raises(ValueError):
++            read_channel_label_meta(f)
++
++
++def test_meta_v2_missing_rul_scale_windows_valueerror(tmp_path):
++    """v2 缺必填 rul_scale_windows → ValueError。"""
++    from src.transfer.channel_dataset import read_channel_label_meta
++    p = _write_min_v2_h5(tmp_path / "norul.h5", rul_scale_windows=None)
++    with h5py.File(p, "r") as f:
++        with pytest.raises(ValueError):
++            read_channel_label_meta(f)
++
++
++def test_meta_v2_non_degc_t_dev_unit_valueerror(tmp_path):
++    """v2 要求 t_dev_unit='degC' (清零重审温度修复产物), 其它单位 → ValueError。"""
++    from src.transfer.channel_dataset import read_channel_label_meta
++    p = _write_min_v2_h5(tmp_path / "kelvin.h5", t_dev_unit="K")
++    with h5py.File(p, "r") as f:
++        with pytest.raises(ValueError):
++            read_channel_label_meta(f)
++
++
++def test_meta_v2_rul_capped_true_valueerror(tmp_path):
++    """v2 要求 rul_capped='false' (不封顶口径), 'true' → ValueError。"""
++    from src.transfer.channel_dataset import read_channel_label_meta
++    p = _write_min_v2_h5(tmp_path / "capped.h5", rul_capped="true")
++    with h5py.File(p, "r") as f:
++        with pytest.raises(ValueError):
++            read_channel_label_meta(f)
+diff --git a/tests/test_models_factory.py b/tests/test_models_factory.py
+index b9dcced..9228a8f 100644
+--- a/tests/test_models_factory.py
++++ b/tests/test_models_factory.py
+@@ -1,11 +1,13 @@
+ """模型唯一构造函数 factory (F1 收口)。
+ 
+ run_groups/导出器/predict_gru 三处共用 build_transfer_model，消除 GRU hidden/layers/
+-adapter/dropout 训练-导出-推理三处漂移。GRU 架构参数 (hidden=64/layers=2) 目前依赖
+-adapter.TRANSFER 默认; factory 必须与 run_groups._build_model 完全同构。
++dropout 训练-导出-推理三处漂移。GRU 架构参数 (hidden=64/layers=2/dropout=0.1) 现从
++config.model.gru 显式读取 (F1-A: 不再吃 adapter 隐式默认); factory 必须与
++run_groups._build_model 完全同构 (后者唯一实现即本 factory)。
+ """
++import copy
+ import sys
+ from pathlib import Path
+ 
+ import pytest
+ import torch
+@@ -36,19 +38,39 @@ def test_factory_builds_gru_main_model():
+     assert (hi >= 0).all() and (hi <= 1).all(), "hi = sigmoid 输出应在 [0,1]"
+     assert (rul >= 0).all(), "rul = softplus 应 ≥ 0"
+ 
+ 
+ def test_factory_gru_hidden_layers_match_adapter_default():
+-    """GRU 必须用 adapter 默认 64/2 (与 run_groups._build_model 现状一致, 防漂移)。"""
++    """GRU 必须用 config.model.gru 默认 64/2 (当前 config 值恰等于 adapter 默认, 防漂移)。
++
++    注意: 该 64/2 现来自 config (factory 显式读取), 不再是 adapter 隐式默认 —
++    值相等只是当前 config 恰好 64/2。config 驱动性见 test_factory_reads_gru_from_config_deepcopy。
++    """
+     cfg = _cfg()
+     model = build_transfer_model(cfg, n_features=4, n_target=4, encoder_type="gru")
+     gru = model.encoder.gru  # nn.GRU(4,64,2,batch_first=True)
+-    assert gru.hidden_size == 64, "adapter 默认 GRU hidden=64"
+-    assert gru.num_layers == 2, "adapter 默认 GRU layers=2"
++    assert gru.hidden_size == 64, "config.model.gru.hidden=64 (当前默认)"
++    assert gru.num_layers == 2, "config.model.gru.num_layers=2 (当前默认)"
+     assert gru.input_size == 4, f"n_features 应=4, 实={gru.input_size}"
+ 
+ 
++def test_factory_reads_gru_from_config_deepcopy():
++    """factory 从 config.model.gru 显式读取 (非硬编码 64/2): 改 cfg 后模型跟着变。
++
++    用 copy.deepcopy 改 hidden=128/num_layers=1 再构建, 断言 encoder.gru 跟随 —
++    证明 factory 读 config 而非写死。deepcopy 避免污染本模块共享的 _cfg() 结果。
++    """
++    cfg = copy.deepcopy(_cfg())
++    cfg["model"]["gru"]["hidden"] = 128
++    cfg["model"]["gru"]["num_layers"] = 1
++    model = build_transfer_model(cfg, n_features=4, n_target=4, encoder_type="gru")
++    gru = model.encoder.gru
++    assert gru.hidden_size == 128, "factory 应从 config.model.gru.hidden 读取 (改 128 后应跟随)"
++    assert gru.num_layers == 1, "factory 应从 config.model.gru.num_layers 读取 (改 1 后应跟随)"
++    assert gru.input_size == 4
++
++
+ def test_factory_roundtrip_weights_with_run_groups_model():
+     """factory 构建的模型与 run_groups._build_model 权重形状一致 (同 config 同 seed 可互载)。"""
+     cfg = _cfg()
+     import src.experiments.run_groups as rg
+     m_rg = rg._build_model(cfg, n_features=4, n_target=4, device="cpu", encoder_override="gru")
+diff --git a/tests/test_rul_scale_policy.py b/tests/test_rul_scale_policy.py
+index 7775ffb..6023685 100644
+--- a/tests/test_rul_scale_policy.py
++++ b/tests/test_rul_scale_policy.py
+@@ -16,11 +16,17 @@ from src.experiments.run_groups import _resolve_rul_scale      # noqa: E402
+ 
+ PA_CONFIG = ROOT / "configs" / "phased_array.yaml"
+ 
+ 
+ def test_channel_mission_horizon_no_second_norm():
+-    """channel + mission_horizon → factor=1.0 (数据已 /H, 不再除 4088)。"""
++    """channel + mission_horizon → factor=1.0 (数据已 /H, 不再除 4088)。
++
++    F1-A 定位注: 本路径是 legacy/v1 兼容回归 — _resolve_rul_scale 对 channel+mission_horizon
++    已无 v2 生产调用方 (run_groups 对 channel v2 直接从 channel_features.h5 meta 读
++    factor=1.0/H, 见 run_groups 中 channel 分支), 但函数未删 (service fallback / v1 legacy
++    仍用), 该测试保留作回归保护。函数确实仍返回 (1.0, 11688)。
++    """
+     cfg = load_config(PA_CONFIG)
+     ch = cfg["channel_level"]
+     factor, scale_windows = _resolve_rul_scale(
+         level="channel", channel_cfg=ch, transfer_cfg=cfg["transfer"])
+     assert factor == 1.0, f"v2 数据不得二次归一, factor 应=1.0, 实={factor}"

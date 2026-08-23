@@ -176,10 +176,27 @@ def main() -> int:
     log.log(f"git_commit={commit}")
     log.log(f"config={config_path.relative_to(ROOT)}")
 
+    # judge 恒为小规模 (fast): 数据隔离——中间产物全部落在输出目录, 不写 canonical 槽位
+    # (2026-08-23 F6: 与 reproduce_full.build_fast_config 同款重定向; judge 曾覆盖
+    #  canonical 200 轨迹冻结基线与 F2 canonical 特征)
+    import copy
+    import yaml
+    cfg_src = yaml.safe_load(config_path.read_text("utf-8"))
+    judge_cfg = copy.deepcopy(cfg_src)
+    judge_cfg["channel_level"]["feature_path"] = (
+        out_dir / "data" / "features" / "channel_features.h5").as_posix()
+    judge_cfg["transfer"]["target_feature_path"] = (
+        out_dir / "data" / "features" / "target_features.h5").as_posix()
+    run_cfg_path = out_dir / f"{config_path.stem}.yaml"   # 沿用原 stem: run_groups 以 stem 判组件
+    run_cfg_path.write_text(
+        yaml.safe_dump(judge_cfg, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    judge_data_root = out_dir / "data" / "simulated" / "phased_array"
+    log.log(f"judge 数据隔离: config={run_cfg_path.name}, data_root={judge_data_root}")
+
     # 1. 源域准备
     log.step("P1 源域数据准备")
     source_report_path = out_dir / "source_report.json"
-    log.run([py, "scripts/prepare_source_data.py", "--config", str(config_path),
+    log.run([py, "scripts/prepare_source_data.py", "--config", str(run_cfg_path),
              "--output", str(source_report_path)])
     source_report = json.loads(source_report_path.read_text("utf-8"))
     source_mode = source_report["source_mode"]
@@ -189,17 +206,21 @@ def main() -> int:
         f"note={'synthetic 源域 smoke：不得与正式源域结果混用' if source_mode == 'synthetic' else 'canonical/真实源域'}\n",
         encoding="utf-8")
 
-    # 2. 仿真（小规模固定轨迹 seed=42）
+    # 2. 仿真（小规模固定轨迹 seed=42; 数据根重定向至输出目录）
     log.step("P2 三级链仿真 (fast, seed=42, sim_v2+sim_v1)")
     sim_manifest_path = out_dir / "sim_manifest.json"
-    log.run([py, "scripts/generate_simulation.py", "--config", str(config_path),
-             "--fast", "--seed", "42", "--manifest", str(sim_manifest_path)])
+    log.run([py, "scripts/generate_simulation.py", "--config", str(run_cfg_path),
+             "--fast", "--seed", "42", "--data-root", str(judge_data_root),
+             "--manifest", str(sim_manifest_path)])
     sim_manifest = json.loads(sim_manifest_path.read_text("utf-8"))
 
-    # 3. HI 构造
+    # 3. HI 构造（--in 指向隔离仿真目录; --out 与派生配置特征路径一致）
     log.step("P3 通道级 + 服务级 HI 构造")
-    log.run([py, "-m", "src.sim.build_channel_hi", "--config", str(config_path), "--report"])
-    log.run([py, "-m", "src.sim.build_array_hi", "--config", str(config_path), "--report"])
+    log.run([py, "-m", "src.sim.build_channel_hi", "--config", str(run_cfg_path),
+             "--report", "--in", str(judge_data_root / "sim_v2" / "seed_42")])
+    log.run([py, "-m", "src.sim.build_array_hi", "--config", str(run_cfg_path),
+             "--report", "--in", str(judge_data_root / "sim_v1" / "seed_42"),
+             "--out", str(out_dir / "data" / "features" / "target_features.h5")])
 
     # 4. 单指标预测（仿真遥测 -> 契约长表 -> component.predict）
     log.step("P4 单指标遥测预测 (component.predict)")
@@ -218,7 +239,7 @@ def main() -> int:
     # 5. 通道级基线
     log.step("P5 通道级非学习基线")
     baselines_path = out_dir / "baselines_channel.json"
-    log.run([py, "-m", "src.baselines.channel_baselines", "--config", str(config_path),
+    log.run([py, "-m", "src.baselines.channel_baselines", "--config", str(run_cfg_path),
              "--seed", "42", "--out", str(baselines_path)])
     baselines = json.loads(baselines_path.read_text("utf-8"))
 
@@ -226,7 +247,7 @@ def main() -> int:
     log.step("P6 对比实验 (smoke, level=channel)")
     groups_dir = out_dir / "groups"
     metrics_json = groups_dir / "all_metrics_phased_array_smoke.json"
-    log.run([py, "-m", "src.experiments.run_groups", "--config", str(config_path),
+    log.run([py, "-m", "src.experiments.run_groups", "--config", str(run_cfg_path),
              "--smoke", "--level", "channel", "--output-dir", str(groups_dir)],
             sentinel=metrics_json)
     all_metrics = json.loads(metrics_json.read_text("utf-8"))
