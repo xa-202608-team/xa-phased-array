@@ -47,7 +47,7 @@ judge/full 产物（`--output` 目录）：
 | 文件 | 内容 |
 |------|------|
 | `manifest.json` | 契约 manifest.schema.json：git_commit、config_sha256、数据 SHA256、seeds、环境、elapsed、status=REPRODUCE_OK |
-| `metrics.json` | 契约 metrics.schema.json：本次运行实测指标（组 RMSE 均值 + 非学习基线），conclusion=NO_POSITIVE_TRANSFER_SUPPORTED（项目冻结结论，见 docs/MODELING.md §6） |
+| `metrics.json` | 契约 metrics.schema.json：本次运行实测指标（组 RMSE 均值 + 非学习基线），conclusion=NO_POSITIVE_TRANSFER_SUPPORTED（契约 v1.1 机器枚举；v0.3.0 公开叙事映射为 `NO_CONFIRMED_POSITIVE_TRANSFER`，见下方兼容说明与 docs/MODELING.md §6） |
 | `run.log` | 全步骤命令与输出 |
 | `REPRODUCE_OK` | 仅整条流程成功时写出的哨兵 |
 | `source_mode.txt` / `sim_manifest.json` / `predict/prediction.json` / `groups/` / `groups/inference_bundle/` / `inference/rul_prediction.json` / `baselines_channel.json` | 各步骤产物（full 含 P5.5 推理自检） |
@@ -58,6 +58,13 @@ judge/full 产物（`--output` 目录）：
 - `canonical_nasa` / `nasa_real`：真实 NASA MOSFET 源域（canonical H5 已就绪）；
 - `synthetic`：本地无真实源域，judge/full 走合成源域 smoke——**该模式结果
   只证明管线连通，不得与正式源域结果混用或对外引用为正式指标**。
+
+**契约枚举兼容说明**：`component-contract-v1.1.0` 的 `schemas/metrics.schema.json`
+仍使用机器枚举 `conclusion=NO_POSITIVE_TRANSFER_SUPPORTED`（judge/full 输出与
+Schema 快照、哈希测试均不修改）；v0.3.0 公开叙事中它**映射**为
+`NO_CONFIRMED_POSITIVE_TRANSFER`（现役口径见 `docs/MODELING.md` §6.0）。
+二者是同一结论的机器/公开两种表述，不构成两套科研结论，也不得据此回改契约
+快照或 reproduce 输出枚举。
 
 ## 3. 逐步复现（等价手动拆解）
 
@@ -78,13 +85,13 @@ SHA256 可交叉核对。
 
 ```bash
 docker build --build-arg XA_GIT_COMMIT=$(git rev-parse HEAD) \
-    [-t xa-phased-array:baseline-v0.1.0 .]        # GPU torch 默认; 无 GPU/NVIDIA 源不可达时加
+    [-t xa-phased-array:v0.3.0-rc.1 .]        # GPU torch 默认; 无 GPU/NVIDIA 源不可达时加
 #   --build-arg TORCH_EXTRA_INDEX=https://download.pytorch.org/whl/cpu 构建 CPU 变体
-docker run --rm xa-phased-array:baseline-v0.1.0 verify
+docker run --rm xa-phased-array:v0.3.0-rc.1 verify
 # 评审复现（canonical H5 与 ckpt 不烘焙进镜像，从只读挂载读取；缺失走 synthetic）：
 docker run --rm -v <host-out>:/outputs \
     [-v <host-canonical-dir>:/artifacts/data:ro -v <host-ckpt-dir>:/artifacts/checkpoints:ro] \
-    xa-phased-array:baseline-v0.1.0 reproduce_judge --output /outputs/judge
+    xa-phased-array:v0.3.0-rc.1 reproduce_judge --output /outputs/judge
 ```
 
 - `/artifacts/data`、`/artifacts/checkpoints`：只读挂载点（canonical H5 / 预训练

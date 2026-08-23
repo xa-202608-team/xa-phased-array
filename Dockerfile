@@ -1,7 +1,7 @@
 # =====================================================================
 # 相控阵组件 - 复现镜像 (Python 3.12 + CUDA torch)
 #   构建时验证: 导入检查 + 契约 Schema 快照 + 完整 pytest (依赖缺失测试自带 skip)
-#   运行时验证: docker run --rm xa-phased-array:baseline-v0.1.0 verify
+#   运行时验证: docker run --rm xa-phased-array:v0.3.0-rc.1 verify
 #
 # 工件边界 (契约 v1.1):
 #   - canonical H5 与 .pt 不烘焙进镜像、不入 Git
