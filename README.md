@@ -32,7 +32,7 @@
 configs/          组件级 YAML（phased_array.yaml / phased_array_gan.yaml）
 src/              仿真、预处理、模型、迁移、实验编排
 component/        契约 v1.1 单指标预测入口（io 标签隔离 / predictor 因果外推）
-schemas/          契约 Schema 快照（component-contract-v1.1.0 Tag 逐字节一致，8 个）
+schemas/          契约 Schema 快照（component-contract-v1.1.0 Tag 逐字节一致 8 个 + 组件自有 rul-prediction.schema.json）
 scripts/          统一入口五件套 + entrypoint.sh + 可视化/分析脚本
 tests/            单元与物理一致性测试（含仓库边界守护、Schema 快照、三级链冻结）
 docs/             MODELING / DATA_DICTIONARY / SIMULATION_REPRODUCE + figures + smoke 结果

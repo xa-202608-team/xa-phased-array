@@ -77,7 +77,7 @@ ENV XA_GIT_COMMIT=${XA_GIT_COMMIT}
 RUN python -c "\
 import json, glob, jsonschema; \
 schemas = [json.load(open(f, encoding='utf-8')) for f in sorted(glob.glob('schemas/*.schema.json'))]; \
-assert len(schemas) == 8, f'expect 8 contract schemas, got {len(schemas)}'; \
+assert len(schemas) == 9, f'expect 9 schemas (8 contract snapshots + rul-prediction), got {len(schemas)}'; \
 [jsonschema.validators.validator_for(s) for s in schemas]; \
 print('contract schemas ok:', len(schemas))" \
  && python -c "\
