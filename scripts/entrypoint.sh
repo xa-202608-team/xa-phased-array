@@ -52,7 +52,7 @@ case "${1:-verify}" in
         python -c "\
 import json, glob, jsonschema; \
 schemas = [json.load(open(f, encoding='utf-8')) for f in sorted(glob.glob('schemas/*.schema.json'))]; \
-assert len(schemas) == 8; \
+assert len(schemas) == 9, f'expect 9 schemas (8 contract snapshots + rul-prediction), got {len(schemas)}'; \
 [jsonschema.validators.validator_for(s) for s in schemas]; \
 print('contract schemas ok:', len(schemas))"
         step "测试套件 (缺失外部数据的测试自动 skip)"

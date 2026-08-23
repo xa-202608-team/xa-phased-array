@@ -92,8 +92,13 @@ def main() -> int:
             "h5_size_bytes": h5.stat().st_size,
         })
 
+    # config 可能是 reproduce 派生到输出目录 (ROOT 外) 的副本, relative_to 失败时记绝对路径
+    try:
+        _cfg_rel = str(config_path.relative_to(ROOT))
+    except ValueError:
+        _cfg_rel = str(config_path)
     manifest = {
-        "config": str(config_path.relative_to(ROOT)),
+        "config": _cfg_rel,
         "config_sha256": config_sha,
         "seed": args.seed,
         "fast": bool(args.fast),
