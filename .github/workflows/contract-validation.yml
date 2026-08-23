@@ -32,6 +32,8 @@ jobs:
               "handoff-manifest.schema.json", "labels.schema.json",
               "manifest.schema.json", "metrics.schema.json",
               "prediction.schema.json", "telemetry.schema.json",
+              # 组件自有 (F1 批3, 非 contract-v1.1 快照): predict_gru 输出自校验
+              "rul-prediction.schema.json",
           }
           assert {f.split("/")[-1] for f in files} == expected, files
           for f in files:
