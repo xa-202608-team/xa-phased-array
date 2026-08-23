@@ -131,7 +131,7 @@ def main() -> int:
     ch_cmd = [py, "-m", "src.sim.build_channel_hi", "--config", str(run_cfg_path), "--report"]
     ar_cmd = [py, "-m", "src.sim.build_array_hi", "--config", str(run_cfg_path), "--report"]
     if args.fast:
-        ch_cmd += ["--indir", str(fast_data_root / "sim_v2" / "seed_42")]
+        ch_cmd += ["--in", str(fast_data_root / "sim_v2" / "seed_42")]
         ar_cmd += ["--in", str(fast_data_root / "sim_v1" / "seed_42"),
                    "--out", str(out_dir / "data" / "features" / "target_features.h5")]
     log.run(ch_cmd)

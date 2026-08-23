@@ -108,11 +108,12 @@ docker run --rm -v <host-out>:/outputs \
   退出码非零但期望产物 JSON 存在且可解析 → 记 WARNING 继续；产物缺失仍判失败。
   Linux/Docker/CI 无此现象。
 - `reproduce_full --fast` 为调试模式：默认单 seed（4 轨迹小样本下 0.15 train
-  比例遇个别种子会抽空，非正式语义）。fast 的中间数据（双仿真集/H5/特征）全部
-  隔离在 `--output` 目录下（派生 `config_fast.yaml` + `data/` 子树），**不写
-  canonical 数据槽位**（2026-08-23 F6 修复：此前 fast 曾覆盖 200 轨迹冻结基线
-  与 canonical 特征，修复含 `generate_simulation --data-root` 与
-  `predict_gru --limit-channels` 合格通道筛选回归测试）。
+  比例遇个别种子会抽空，非正式语义）。fast 与 `reproduce_judge` 的中间数据
+  （双仿真集/H5/特征）全部隔离在 `--output` 目录下（派生 `config_fast.yaml` /
+  `config_judge.yaml` + `data/` 子树），**不写 canonical 数据槽位**
+  （2026-08-23 F6 修复：此前 fast/judge 曾覆盖 200 轨迹冻结基线与 canonical
+  特征，修复含 `generate_simulation --data-root` 与 `predict_gru
+  --limit-channels` 合格通道筛选回归测试）。
 
 ## 6. 冒烟基线证据
 
