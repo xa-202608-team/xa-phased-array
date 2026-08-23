@@ -107,6 +107,3 @@ F1-A 完成: 5 commits on feature/f1a-closeout-rul-v2 (merge-base c7b7a8e)
   收尾期退出码以产物哨兵判定 — 三处均改脚本并复跑验证。
 - 产物: docs/results_phased_array_f4.md + outputs/f4_oat/oat_results.json +
   outputs/f4_ablation/{b2_count,b3_subagg,b3_sparse}/。
-
-
-

@@ -48,7 +48,7 @@ def b1_full_vs_simplified(k_sustain: int = 4, sll_max: float = -8.0,
             e_link = _first_sustained(m <= 0.0, k_sustain)
             e_sll = _first_sustained(s > sll_max, k_sustain)
             e_th = _first_sustained(th > th_max, k_sustain)
-            cands = [(e, n) for e, n in ((e_link, "M_link"), (e_sll, "SLL"), (e_th, "theta")) 
+            cands = [(e, n) for e, n in ((e_link, "M_link"), (e_sll, "SLL"), (e_th, "theta"))
                      if e is not None]
             if not cands:
                 continue                            # full 口径删失, 不入对比
