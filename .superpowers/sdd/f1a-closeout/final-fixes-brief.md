@@ -1,6 +1,6 @@
 # F1-A 终审修复清单（3 Important + 2 Minor）
 
-终审（opus）无 Critical，但下列项合前修。组件仓根 `E:/Cheng/PhD/比赛/2026挑战杯/TrainingProject/.collaboration-workspace/xa-phased-array`，分支 feature/f1a-closeout-rul-v2（不要切分支）。Python `/f/anaconda3/envs/pytorch_gpu/python.exe`。
+终审（opus）无 Critical，但下列项合前修。组件仓根即本仓库根，分支 feature/f1a-closeout-rul-v2（不要切分支）。Python 为本机 conda `pytorch_gpu` 环境解释器（绝对路径已按公开仓扫描规则匿名化，2026-08-23）。
 
 ## I-1（Important）scripts/run_fault_model_eval.py 评估侧 rul_norm 硬编码 4088
 
