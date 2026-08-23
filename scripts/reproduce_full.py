@@ -85,7 +85,9 @@ def main() -> int:
         import yaml
         cfg_src = yaml.safe_load(config_path.read_text("utf-8"))
         fast_cfg = build_fast_config(cfg_src, out_dir)
-        run_cfg_path = out_dir / "config_fast.yaml"
+        # 文件名必须沿用原 config stem: run_groups 以 Path(config).stem 判定组件
+        # (phased_array), 换名会误入飞轮分支/找不到 source ckpt (F6 批3 回归)
+        run_cfg_path = out_dir / f"{config_path.stem}.yaml"
         run_cfg_path.write_text(
             yaml.safe_dump(fast_cfg, allow_unicode=True, sort_keys=False),
             encoding="utf-8")

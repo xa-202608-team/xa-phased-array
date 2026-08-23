@@ -187,7 +187,7 @@ def main() -> int:
         out_dir / "data" / "features" / "channel_features.h5").as_posix()
     judge_cfg["transfer"]["target_feature_path"] = (
         out_dir / "data" / "features" / "target_features.h5").as_posix()
-    run_cfg_path = out_dir / "config_judge.yaml"
+    run_cfg_path = out_dir / f"{config_path.stem}.yaml"   # 沿用原 stem: run_groups 以 stem 判组件
     run_cfg_path.write_text(
         yaml.safe_dump(judge_cfg, allow_unicode=True, sort_keys=False), encoding="utf-8")
     judge_data_root = out_dir / "data" / "simulated" / "phased_array"
