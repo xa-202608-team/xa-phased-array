@@ -86,7 +86,9 @@ def apply_pass_protocol(x_ch: np.ndarray, window_s: float, params: dict,
 
 
 def _copy_group_deep(src: h5py.Group, dst: h5py.Group) -> None:
-    """递归深拷贝 (用于 twin 等非 sub_ 成员: L2 物理孪生参数必须原样保留)。"""
+    """递归深拷贝含 attrs (用于 twin 等非 sub_ 成员: L2 物理孪生参数必须原样保留)。"""
+    for k, v in src.attrs.items():
+        dst.attrs[k] = v
     for key in src.keys():
         item = src[key]
         if isinstance(item, h5py.Group):
@@ -116,6 +118,8 @@ def adapt_dataset(src: Path, dst: Path, cfg: dict) -> dict:
                 gd_sub = fd.create_group(f"{traj}/{sub}")
                 if sub.startswith("sub_"):
                     gs = gt[sub]
+                    for k, v in gs.attrs.items():      # sub_id 等 attrs 原样保留
+                        gd_sub.attrs[k] = v
                     for key in gs.keys():
                         if key == "x_ch":
                             continue

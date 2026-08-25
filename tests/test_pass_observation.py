@@ -25,6 +25,7 @@ def tiny_h5(tmp_path_factory):
             tw.create_dataset("twin_c_elem", data=rng.normal(size=16).astype(np.float32))
             for s in range(2):
                 g = f.create_group(f"traj_{t:03d}/sub_{s:02d}")
+                g.attrs["sub_id"] = t * 16 + s         # 训练/推理加载器要求的 attrs
                 T = 800
                 g.create_dataset("x_ch", data=rng.normal(size=(T, 4)).astype(np.float32))
                 g.create_dataset("hi_ch", data=np.linspace(0, 1, T, dtype=np.float32))
@@ -112,6 +113,7 @@ class TestAdaptDataset:
                 for s in ("sub_00", "sub_01"):
                     gd, gs = fd[f"{t}/{s}"], fs[f"{t}/{s}"]
                     assert set(gd.keys()) == set(gs.keys()) | {"obs_status"}
+                    assert gd.attrs["sub_id"] == gs.attrs["sub_id"]
                     for k in ("hi_ch", "z_ch", "rul_ch_norm", "rul_ch_windows"):
                         np.testing.assert_array_equal(gd[k][()], gs[k][()])
             assert fd.attrs["canonical_schema"] == fs.attrs["canonical_schema"]
