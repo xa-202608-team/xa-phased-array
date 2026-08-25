@@ -283,3 +283,21 @@ fault_injection:
       phase_residual_mult: 4.0              # 相位残差放大 4× (补偿失效后残差不再被压制)
       start_frac: 0.40                      # 0.40 × EOL_svc_nom
       scope: array                          # 预期 SLL/θ_err 加速恶化, 可能触发多维越限绑定切换
+
+# ---------- 过站观测协议适配层 (P1, LJ3 真实遥测审计落地 2026-08-25) ----------
+# LJ3 龙江三号实测协议 (父仓库 docs/数据集下载/LJ3_相控阵遥测审计报告.md §3):
+# 9 过站/73.41h (占空比 1.55%), 通道测量过站级更新 (段内恒定), 29.3% 未校准
+# 占位帧 (通道测量全零为占位语义), 幅度量化 1 dB / 温度 0.019 °C/LSB。
+# 对 6h 窗口级通道任务: 过站协议 = 窗口命中率 ~6/8.16=73.5% + 观测失真, 非大幅欠采样。
+# enabled=false (默认): 不生成任何变体, 现有数据集/hash/复现链 bit-exact 不变;
+# 生成入口: python -m src.sim.pass_observation (需显式 enabled=true)。
+observation_adapter:
+  enabled: false
+  source_dataset: data/features/phased_array/schema_ch_v1/target/channel_features.h5
+  output_dataset: data/features/phased_array/schema_ch_v1/target/channel_features_pass.h5
+  pass_interval_h: 8.16                    # 平均过站间隔 (LJ3 73.41h / 9 站)
+  pass_jitter: 0.25                        # 站间隔相对抖动 U(-1,1)
+  frame_period_s: 21600                    # 任务窗口粒度 (沿用 sim.sample_period_s)
+  uncal_fraction: 0.293                    # 命中窗口内未校准占位比例 (LJ3 实测)
+  quant_steps: [0.059, 0.02, 0.05, 0.059]  # canonical 4 维等效观测阶梯 (1dB→20log10 比值; T 0.019°C)
+  seed: 20260825
