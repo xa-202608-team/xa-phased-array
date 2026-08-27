@@ -41,7 +41,6 @@ from src.utils import load_config, set_seed                                  # n
 from src.transfer.train_transfer import TargetSeqDataset, split_trajectories  # noqa: E402
 from src.transfer.adapter import TransferModel                                # noqa: E402
 from src.transfer.channel_dataset import load_target_channel                  # noqa: E402
-from src.train.pretrain import _rul_loss                                      # noqa: E402
 
 CKPT_DIR = ROOT / "checkpoints"
 N_SUB = 16
@@ -51,7 +50,6 @@ plt.rcParams["axes.unicode_minus"] = False
 
 C_TRUE = "#1a1a1a"
 C_TARGET = "#2563eb"
-C_SOURCE = "#dc2626"
 C_EOL = "#f59e0b"
 # 16 子阵配色 (tab20 色环)
 SUB_COLORS = plt.cm.tab20(np.linspace(0, 1, N_SUB))
@@ -99,105 +97,6 @@ def load_and_prepare(cfg, seed):
                 evT=evT, lbT=lbT, damageT=damageT,
                 tr=tr, va=va, te=te, n_traj=n_traj, L=L, K=K,
                 rul_max=rul_max, n_features=xT.shape[1], h5_path=h5_path)
-
-
-# ===================================================================== 模型
-def build_model(cfg, n_target, device, encoder="gru"):
-    # F1-A: 复用唯一构造函数 (与训练/评估/导出/推理同架构, 防漂移)
-    from src.models.factory import build_transfer_model
-    return build_transfer_model(cfg, n_features=4, n_target=n_target,
-                                encoder_type=encoder, device=device)
-
-
-def _train_epoch(model, loader, opt, device, huber, mse, lam):
-    model.train()
-    for x, h, r, ev, lb, dmg in loader:
-        x, h, r = x.to(device), h.to(device), r.to(device)
-        ev, lb = ev.to(device), lb.to(device)
-        B, Kk = x.size(0), x.size(1)
-        hi_p, rul_p, _ = model(x.reshape(B * Kk, x.size(2), x.size(3)))
-        hi_p = hi_p.view(B, Kk)
-        rul_p = rul_p.view(B, Kk)
-        Lr, _, _ = _rul_loss(rul_p, r, ev, lb, huber, 1.0)
-        Lh = mse(hi_p, h)
-        d = hi_p[:, 1:] - hi_p[:, :-1]
-        loss = Lr + lam[0] * Lh + lam[1] * torch.relu(-d).mean() + lam[2] * (d * d).mean()
-        opt.zero_grad()
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-        opt.step()
-
-
-@torch.no_grad()
-def _eval_rmse(model, loader, device):
-    model.eval()
-    preds, labels, evs = [], [], []
-    for x, h, r, ev, lb, dmg in loader:
-        x = x.to(device)
-        B, Kk = x.size(0), x.size(1)
-        _, rul_p, _ = model(x.reshape(B * Kk, x.size(2), x.size(3)))
-        preds.append(rul_p.cpu().numpy())
-        labels.append(r.reshape(-1).numpy())
-        evs.append(ev.reshape(-1).numpy())
-    p = np.concatenate(preds) if preds else np.array([0.0])
-    t = np.concatenate(labels) if labels else np.array([0.0])
-    e = np.concatenate(evs) if evs else np.array([True])
-    m = e.astype(bool)
-    return float(np.sqrt(np.mean((p[m] - t[m]) ** 2))) if m.any() else 0.0
-
-
-def _train(model, ltr, lva, opt, device, huber, mse, lam, epochs, tag):
-    best = (float("inf"), None)
-    for ep in range(epochs):
-        _train_epoch(model, ltr, opt, device, huber, mse, lam)
-        vm = _eval_rmse(model, lva, device)
-        if vm < best[0]:
-            best = (vm, {k: v.detach().clone() for k, v in model.state_dict().items()})
-    if best[1] is not None:
-        model.load_state_dict(best[1])
-    print(f"  [{tag}] best val_rmse={best[0]:.4f}")
-
-
-def train_model(model_name, data, cfg, device):
-    tc = cfg["transfer"]
-    _lc = cfg["loss"]
-    lam = (float(_lc.get("beta_hi", 1.0)),
-           float(_lc.get("mu_mono", 1.0)),
-           float(_lc.get("nu_smooth", 0.1)))
-    huber = torch.nn.HuberLoss(delta=float(_lc["huber_delta"]))
-    mse = torch.nn.MSELoss()
-    L, K = data["L"], data["K"]
-    tstride = int(tc.get("target_stride", 50))
-    bs = int(cfg["pretrain"]["batch_size"])
-    epochs = int(tc.get("epochs_s2", 20))
-
-    def mkDS(ids):
-        m = np.isin(data["tidT"], ids)
-        return TargetSeqDataset(data["xT"][m], data["hiT"][m], data["rulT"][m],
-                                data["ckT"][m], L, K, stride=tstride,
-                                event_observed=data["evT"][m],
-                                rul_lower_bound=data["lbT"][m],
-                                damage_b=data["damageT"][m])
-
-    ltr = DataLoader(mkDS(data["tr"]), batch_size=bs, shuffle=True)
-    lva = DataLoader(mkDS(data["va"]), batch_size=bs, shuffle=False)
-
-    if model_name == "ch_target_only_gru":
-        model = build_model(cfg, data["n_features"], device, encoder="gru")
-        model.freeze_encoder(False)
-        opt = torch.optim.Adam(model.parameters(), lr=float(tc["finetune_lr"]))
-        _train(model, ltr, lva, opt, device, huber, mse, lam, epochs, "ch_target_only_gru")
-    elif model_name == "ch_source_pretrain_frozen":
-        model = build_model(cfg, data["n_features"], device, encoder="tcn")
-        ckpt = str(CKPT_DIR / "source_phased_array_tcn_pretrain.pt")
-        if Path(ckpt).exists():
-            model.load_pretrained(ckpt, device)
-            print(f"  加载源域 checkpoint: {ckpt}")
-        model.freeze_encoder(True)
-        opt = torch.optim.Adam([p for p in model.parameters() if p.requires_grad],
-                               lr=float(tc["finetune_lr"]))
-        _train(model, ltr, lva, opt, device, huber, mse, lam, epochs, "ch_source_pretrain_frozen")
-    return model
 
 
 # ===================================================================== 逐通道推理
@@ -305,7 +204,7 @@ def select_test_trajectory(data, h5_path, min_T=600):
 
 
 # ===================================================================== 画图
-def plot_ch_rul_trajectory(model_tgt, model_src, data, traj_id, device, out_path):
+def plot_ch_rul_trajectory(model_tgt, data, traj_id, device, out_path):
     """图1: 通道级 RUL 预测轨迹面板 (2×3)。"""
     subs_raw = read_traj_channel_raw(data["h5_path"], traj_id)
     if subs_raw is None:
@@ -323,8 +222,11 @@ def plot_ch_rul_trajectory(model_tgt, model_src, data, traj_id, device, out_path
     L, K = data["L"], data["K"]
     rul_max = data["rul_max"]
     # 归一用 train stats (与训练一致)
-    _fm = data["xT"][np.isin(data["tidT"], data["tr"])].mean(axis=0)
-    _fs = data["xT"][np.isin(data["tidT"], data["tr"])].std(axis=0) + 1e-6
+    if "fm" in data:   # bundle 模式: 冻结统计量 (与 predict_gru 链路一致)
+        _fm, _fs = data["fm"], data["fs"]
+    else:
+        _fm = data["xT"][np.isin(data["tidT"], data["tr"])].mean(axis=0)
+        _fs = data["xT"][np.isin(data["tidT"], data["tr"])].std(axis=0) + 1e-6
 
     fig, axes = plt.subplots(2, 3, figsize=(16, 9))
     for idx, sid in enumerate(picks):
@@ -343,8 +245,7 @@ def plot_ch_rul_trajectory(model_tgt, model_src, data, traj_id, device, out_path
 
         ax.plot(time_years, true_rul, color=C_TRUE, linewidth=1.5, label="真值 RUL", zorder=5)
 
-        for name, model, color in [("target_only_gru", model_tgt, C_TARGET),
-                                   ("source_frozen", model_src, C_SOURCE)]:
+        for name, model, color in [("target_only_gru (bundle)", model_tgt, C_TARGET)]:
             t_idx, p_rul, _, _, _ = predict_channel(
                 model, x_norm, hi, rul_norm, ev, rul_norm, dmg, L, K, device)
             if len(t_idx) > 0:
@@ -372,8 +273,11 @@ def plot_ch_hi_spatial(model_tgt, data, traj_id, device, out_path):
         return
     L, K = data["L"], data["K"]
     rul_max = data["rul_max"]
-    _fm = data["xT"][np.isin(data["tidT"], data["tr"])].mean(axis=0)
-    _fs = data["xT"][np.isin(data["tidT"], data["tr"])].std(axis=0) + 1e-6
+    if "fm" in data:   # bundle 模式: 冻结统计量 (与 predict_gru 链路一致)
+        _fm, _fs = data["fm"], data["fs"]
+    else:
+        _fm = data["xT"][np.isin(data["tidT"], data["tr"])].mean(axis=0)
+        _fs = data["xT"][np.isin(data["tidT"], data["tr"])].std(axis=0) + 1e-6
 
     fig, axes = plt.subplots(1, 2, figsize=(16, 5))
 
@@ -432,8 +336,11 @@ def plot_ch_rul_scatter(model, data, device, out_path, label="ch_target_only_gru
     """图3: 通道级全 test 散点。用 stride=50 采样 + 批量推理加速。"""
     L, K = data["L"], data["K"]
     rul_max = data["rul_max"]
-    _fm = data["xT"][np.isin(data["tidT"], data["tr"])].mean(axis=0)
-    _fs = data["xT"][np.isin(data["tidT"], data["tr"])].std(axis=0) + 1e-6
+    if "fm" in data:   # bundle 模式: 冻结统计量 (与 predict_gru 链路一致)
+        _fm, _fs = data["fm"], data["fs"]
+    else:
+        _fm = data["xT"][np.isin(data["tidT"], data["tr"])].mean(axis=0)
+        _fs = data["xT"][np.isin(data["tidT"], data["tr"])].std(axis=0) + 1e-6
     sample_stride = 50   # 散点图不需要逐点, 每 50 步采一个足够
 
     # 批量构建所有 test 通道的窗口
@@ -532,6 +439,10 @@ def main():
     ap.add_argument("--config", default="configs/phased_array.yaml")
     ap.add_argument("--output-dir", default="docs/figures")
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--bundle-dir", required=True,
+                    help="inference bundle 目录 (model.pt + bundle.json, 冻结主模型); "
+                         "训练前置, 图只消费冻结权重; 归一用 bundle 冻结统计量, "
+                         "与 component.predict_gru 链路一致")
     args = ap.parse_args()
 
     cfg = load_config(ROOT / args.config)
@@ -550,12 +461,16 @@ def main():
     print(f"  device={device}")
 
     print("=" * 60)
-    print("2. 训练 ch_target_only_gru")
-    model_tgt = train_model("ch_target_only_gru", data, cfg, device)
-
-    print("=" * 60)
-    print("3. 训练 ch_source_pretrain_frozen")
-    model_src = train_model("ch_source_pretrain_frozen", data, cfg, device)
+    print(f"2. 加载 inference bundle: {args.bundle_dir} (冻结主模型, 训练前置)")
+    from component.predict_gru import load_bundle, rebuild_model
+    bd = (ROOT / args.bundle_dir if not Path(args.bundle_dir).is_absolute()
+          else Path(args.bundle_dir))
+    bundle = load_bundle(bd)
+    model_tgt = rebuild_model(bundle, bd, device)
+    data["fm"] = np.array(bundle["normalizer"]["mean"], dtype=np.float64)
+    data["fs"] = np.array(bundle["normalizer"]["std"], dtype=np.float64)
+    print(f"  group={bundle['group']} seed={bundle['seed']} "
+          f"val_rmse={bundle['metrics']['val_rmse']:.4f} (冻结口径)")
 
     print("=" * 60)
     print("4. 选测试轨迹")
@@ -564,7 +479,7 @@ def main():
 
     print("=" * 60)
     print("5. 画图")
-    plot_ch_rul_trajectory(model_tgt, model_src, data, traj_id, device,
+    plot_ch_rul_trajectory(model_tgt, data, traj_id, device,
                           out_dir / "ch_rul_trajectory_panel.png")
     plot_ch_hi_spatial(model_tgt, data, traj_id, device,
                        out_dir / "ch_hi_spatial_diversity.png")
